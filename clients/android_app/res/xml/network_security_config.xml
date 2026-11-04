@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 로봇의 웹 조종기(http://<IP>:18765)와 카메라(http://<IP>:8080)는 같은 와이파이 안의 평문 HTTP 다. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

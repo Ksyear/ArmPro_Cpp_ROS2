@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>armpi_kinematics</name>
+  <version>0.1.0</version>
+  <description>ArmPi Pro 5축 팔 IK/FK 라이브러리 (노드 없음)</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

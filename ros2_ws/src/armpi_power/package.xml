@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>armpi_power</name>
+  <version>0.2.0</version>
+  <description>KEY2 종료 요청(/armpi/shutdown_requested)을 받아 시스템을 끄는 작은 C++ 노드(armpi-shutdown.service)</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

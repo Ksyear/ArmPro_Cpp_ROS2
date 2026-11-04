@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>armpi_control</name>
+  <version>0.1.0</version>
+  <description>ArmPi Pro 제어 노드(C++): 비상정지 latch, 2차 watchdog, cmd_vel → 메카넘 바퀴, ArmTarget 보간 → IK → 버스 서보, 상태 발행. hardware.mock:=true 로 가짜 하드웨어 실행</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>armpi_interfaces</depend>
+  <depend>armpi_kinematics</depend>
+  <depend>armpi_hardware</depend>
+  <depend>armpi_common</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

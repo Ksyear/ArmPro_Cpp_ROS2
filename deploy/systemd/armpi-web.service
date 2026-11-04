@@ -1,0 +1,26 @@
+[Unit]
+Description=ArmPi Pro web controller (C++ armpi_web_gateway: phone/PC UI http://<robot>:18765 -> Protocol v3 UDP 127.0.0.1:5001, status via ROS 2)
+# 로봇 안 웹 조종기. 같은 와이파이의 휴대폰 브라우저·Android 앱이 http://<로봇IP>:18765/mobile 로 접속한다.
+# 매개변수: armpi_bringup/config/armpi.yaml 의 armpi_web_gateway 구역(0.0.0.0 이면 세션 on-demand:
+#   조종권을 잡은 화면이 있을 때만 v3 세션을 열고, 화면이 없거나 60 s 조작이 없으면 disconnect → VR 등 다른 조종기가 쓸 수 있음).
+# 인증이 없으므로 같은 망의 누구나 화면을 열 수 있다. 신뢰하는 망(연구실 와이파이·로봇 AP)에서만 쓴다.
+# v1 은 파이썬(/opt/armpi/mac_controller)이었다. v2 는 C++ 노드를 바로 실행한다(bash 는 환경만 읽고 exec).
+After=network-online.target armpi.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+Environment=ROS_DOMAIN_ID=0
+Environment=ROS_LOCALHOST_ONLY=0
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && exec /opt/armpi/ros2_ws/install/lib/armpi_web_gateway/armpi_web_gateway_node --ros-args --params-file /opt/armpi/ros2_ws/install/share/armpi_bringup/config/armpi.yaml'
+Restart=on-failure
+RestartSec=3
+# SIGINT: 두 채널 중립·disconnect 를 보내고 끝낸다.
+KillSignal=SIGINT
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>armpi_protocol</name>
+  <version>0.2.0</version>
+  <description>ArmPi Protocol v3 형식(패킷 해석·ACK 작성) 라이브러리. 수신기와 C++ 클라이언트가 같이 쓴다 (ROS 비의존)</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>armpi_common</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

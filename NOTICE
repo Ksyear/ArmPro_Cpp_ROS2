@@ -1,0 +1,12 @@
+ArmPro_Cpp_ROS2
+Copyright 2026 ArmPro_Cpp_ROS2 contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This is an independent project intended for use with the Hiwonder ArmPi Pro robot hardware.
+It is not affiliated with, endorsed by, or sponsored by Hiwonder.
+"Hiwonder", "ArmPi" and other product names are trademarks of their respective owners
+and are used here only to identify the target hardware.
+
+이 프로젝트는 Hiwonder ArmPi Pro 하드웨어에서 쓰려고 만든 독립 프로젝트이며 Hiwonder와 관계없다.
+"Hiwonder", "ArmPi" 등 제품 이름은 각 소유자의 상표이고, 대상 하드웨어를 가리키는 데만 쓴다.

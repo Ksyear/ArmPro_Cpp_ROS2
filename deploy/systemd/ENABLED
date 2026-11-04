@@ -1,0 +1,4 @@
+# 부팅 시 켤 유닛 (30_workspace.sh 가 읽음)
+armpi.service
+armpi-shutdown.service
+armpi-web.service

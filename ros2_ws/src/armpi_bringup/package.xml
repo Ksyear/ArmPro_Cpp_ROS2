@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>armpi_bringup</name>
+  <version>0.1.0</version>
+  <description>ArmPi Pro 실행 묶음: config/armpi.yaml(모든 노드 매개변수), launch/armpi.launch.py(실기), launch/armpi_mock.launch.py(가짜 하드웨어)</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>armpi_control</exec_depend>
+  <exec_depend>armpi_vr_bridge</exec_depend>
+  <!-- 선택(없으면 launch 가 건너뜀): usb_cam, web_video_server, rosbridge_server -->
+  <exec_depend>usb_cam</exec_depend>
+  <exec_depend>web_video_server</exec_depend>
+  <exec_depend>rosbridge_server</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

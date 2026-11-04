@@ -1,0 +1,70 @@
+# ArmPi Pro 하드웨어 프로필 본보기.
+#
+# 쓰는 법: 이 파일을 hardware_profile.yaml 로 복사하고 빈 값(null)을 채운다. launch 는
+#   ros2 launch armpi_bringup armpi.launch.py hardware_profile:=<경로>
+# 로 받거나, 설치된 share/armpi_bringup/config/hardware_profile.yaml 을 찾는다.
+# 실제 하드웨어 모드에서 값이 하나라도 비어 있으면 제어 노드는 장치를 열지 않고 fault 로 시작한다
+# (바퀴·서보에 아무것도 보내지 않음). 가짜 하드웨어 모드는 test_hardware_profile.yaml(시험용 값)을 쓴다.
+#
+# 채워 둔 값은 Hiwonder 공개 자료에서 확인한 것이다(출처는 각 줄 주석).
+# 빈 값은 공개 자료에서 확인하지 못한 것이라 이 저장소에 두지 않는다. 로봇을 직접 측정하거나
+# 제조사 자료로 채운다. 처음 움직일 때는 바퀴를 띄우고 팔 주변을 비운 뒤 한 관절씩 확인한다(docs/10).
+#
+# 출처
+#   [A] ArmPi Pro 공식 문서: https://wiki.hiwonder.com/projects/ArmPi_Pro/en/latest/
+#   [B] Hiwonder 버스 서보 통신 규격(ROS Robot Control Board 문서 3.8.3):
+#       https://wiki.hiwonder.com/projects/ROS-Robot-Control-Board/en/latest/docs/3_RosRobot_Controller_Program_Analysis.html
+#   [E] Hiwonder 공개 ArmPi FPV 기구학(transform.py 의 joint 범위):
+#       https://github.com/Hiwonder/ArmPi-FPV/blob/HEAD/src/armpi_fpv_kinematics/src/armpi_fpv_kinematics/transform.py
+/**:
+  ros__parameters:
+    # 관절 기준: joint = sign × 기하 각도 + offset (rad). 서보 중앙(500)일 때 관절 자세를 측정해 정한다.
+    arm.kinematics.j1_sign: null
+    arm.kinematics.j1_offset: null
+    arm.kinematics.j2_sign: null
+    arm.kinematics.j2_offset: null
+    arm.kinematics.j3_sign: null
+    arm.kinematics.j3_offset: null
+    arm.kinematics.j4_sign: null
+    arm.kinematics.j4_offset: null
+    # 관절 범위(rad), joint1..joint4. joint1·joint3 의 ±120° 는 [E]. joint2·joint4 는 측정해서 채운다.
+    # 예: arm.kinematics.joint_min: [-2.0943951023931953, <joint2 최소>, -2.0943951023931953, <joint4 최소>]
+    arm.kinematics.joint_min: null
+    arm.kinematics.joint_max: null
+
+armpi_control:
+  ros__parameters:
+    # 메카넘 차체: a, b = 차체 중심에서 바퀴까지(mm), 바퀴 지름(mm), 바퀴 1회전당 엔코더 펄스
+    chassis.a_mm: null
+    chassis.b_mm: null
+    chassis.wheel_diameter_mm: null
+    chassis.pulse_per_cycle: null
+    # 관절(joint1 몸통 회전, joint2, joint3, joint4, joint5 손목 회전, r_joint 그리퍼) → 서보 ID.
+    # [A]: ID1 = 그리퍼, ID2 = 손목 회전, ID6 = 몸통 회전. joint2..joint4 의 ID 는 측정해서 채운다.
+    # 예: arm.servo_ids: [6, <joint2>, <joint3>, <joint4>, 2, 1]
+    arm.servo_ids: null
+    arm.joint_directions: null           # 관절별 +1 또는 -1 (서보값이 늘 때 관절각이 늘면 +1)
+    arm.home_servo_values: null          # 켤 때 보낼 서보값 6개(서보 ID1..6 순서, 0..1000). 중앙 500 은 [B]
+    arm.gripper.open_value: null         # 그리퍼 열림 서보값
+    arm.gripper.close_value: null        # 그리퍼 닫힘 서보값(너무 세게 닫으면 서보가 뜨거워진다)
+    arm.gripper.servo_min: null
+    arm.gripper.servo_max: null
+    # 확장보드(배터리 전압·팬): I2C 주소, 배터리 레지스터, DC 모터 1번 레지스터, 속도 부호(+1/-1)
+    hardware.expansion_board_address: null
+    hardware.battery_register: null
+    hardware.dc_motor_register: null
+    hardware.dc_motor_sign: null
+    fan.motor_index: null                # 팬이 연결된 DC 모터 번호(1..4)
+    fan.speed: null                      # -100..100
+    # GPIO(BCM 번호)
+    hardware.servo_rx_con_bcm: null      # 버스 서보 반이중 받기 방향 핀
+    hardware.servo_tx_con_bcm: null      # 버스 서보 반이중 보내기 방향 핀
+    buzzer.bcm: null
+    buttons.key1_bcm: null
+    buttons.key2_bcm: null
+    # 버스 서보 반이중 방향 전환 타이밍. 통신 속도 115200 bps 반이중은 [B]
+    servo.pre_write_delay_us: null
+    servo.post_write_delay_us: null
+    servo.read_turnaround_delay_us: null
+    servo.read_timeout_ms: null
+    servo.read_attempts: null

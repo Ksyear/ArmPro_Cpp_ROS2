@@ -1,0 +1,17 @@
+# colcon 산출물
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+# 시험·빌드 기록, 앱 산출물
+work/
+output/
+# 로봇마다 채우는 하드웨어 프로필(본보기 hardware_profile.template.yaml 만 저장소에 둔다)
+ros2_ws/src/armpi_bringup/config/hardware_profile.yaml
+# 서명 키·비밀 파일(저장소에 넣지 않음)
+clients/android_app/debug.keystore
+*.env
+# 편집기·파이썬 부산물
+__pycache__/
+*.pyc
+.DS_Store
+._*

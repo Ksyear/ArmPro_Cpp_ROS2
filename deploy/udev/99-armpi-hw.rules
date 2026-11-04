@@ -1,0 +1,8 @@
+# ArmPi: gpio/i2c 그룹에 하드웨어 장치 접근 권한 부여 (Raspberry Pi OS 와 같은 그룹 방식)
+SUBSYSTEM=="bcm2835-gpiomem", KERNEL=="gpiomem", GROUP="gpio", MODE="0660"
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+SUBSYSTEM=="i2c-dev", KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"
+SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+# ArmPi: USB 카메라(uvcvideo)를 꽂을 때 전원 주파수 깜빡임 보정을 한국 전원 60 Hz 로(카메라 기본은 50 Hz).
+#        armpi.launch.py 도 시작할 때 같은 값을 적용한다(camera_power_line_hz).
+ACTION=="add", SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", ATTR{index}=="0", DRIVERS=="uvcvideo", RUN+="/usr/bin/v4l2-ctl -d $devnode -c power_line_frequency=2"

@@ -1,0 +1,26 @@
+[Unit]
+Description=ArmPi Pro ROS 2 stack (armpi_bringup armpi.launch.py: control, vr_bridge, usb_cam, web_video_server, rosbridge)
+# Fast DDS 설정(대용량 영상용 버퍼·공유 메모리)은 launch 가 FASTRTPS_DEFAULT_PROFILES_FILE 로 정한다
+# (armpi_bringup/config/fastdds_armpi.xml, 끄려면 launch 인자 dds_profile:=""). 커널 상한은 /etc/sysctl.d/60-armpi-dds.conf(저장소 deploy/sysctl/).
+After=network.target time-sync.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+SupplementaryGroups=dialout i2c gpio video
+Environment=ROS_DOMAIN_ID=0
+Environment=ROS_LOCALHOST_ONLY=0
+Environment=HOME=/home/ubuntu
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && exec ros2 launch armpi_bringup armpi.launch.py'
+# 제어 노드가 멈추거나 비정상 종료해도 모터 보드가 마지막 속도를 유지하지 않도록 네 바퀴 속도를 0 으로 쓴다
+# (모터 보드 I2C 0x34, 레지스터 51 = 4바퀴 속도. Hiwonder 엔코더 모터 드라이버 공개 예제 기준). 실패해도 서비스 결과에는 영향 없음(-).
+ExecStopPost=-/usr/sbin/i2cset -y 1 0x34 51 0x00 0x00 0x00 0x00 i
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

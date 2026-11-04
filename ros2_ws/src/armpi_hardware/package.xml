@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>armpi_hardware</name>
+  <version>0.1.0</version>
+  <description>ArmPi Pro 하드웨어 드라이버 라이브러리(노드 없음): I2C 0x34 바퀴 모터, 확장보드(배터리·팬, 주소·레지스터는 하드웨어 프로필), 반이중 버스 서보(UART + libgpiod 방향 전환), GPIO(부저·버튼), 메카넘·서보 변환, 가짜(mock) 장치</description>
+  <maintainer email="noreply@example.invalid">ArmPro_Cpp_ROS2 contributors</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>pkg-config</buildtool_depend>
+
+  <!-- 이미지에는 apt 로 설치: 빌드 libgpiod-dev, 실행 libgpiod2. I2C 는 커널 헤더(linux-libc-dev)만 쓴다(libi2c 불필요). -->
+  <depend>libgpiod-dev</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

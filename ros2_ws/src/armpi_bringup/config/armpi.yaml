@@ -1,0 +1,173 @@
+# ArmPi Pro 전체 매개변수 (armpi_bringup). 모든 로봇 노드 매개변수를 이 파일 하나에 둔다.
+#   - 하드웨어 값은 기본값이다. 실제 로봇에서 확인한 뒤 조정한다(docs/10).
+#   - 토픽·서비스·제어기 규칙: docs/02_ROS2_INTERFACES.md, 프로토콜·시간값·물리량: docs/01_PROTOCOL_V3_SPEC.md
+# 주의: ROS 2 매개변수는 자료형이 엄격하다. 실수에는 반드시 소수점(1 이 아니라 1.0), 정수에는 소수점 없이.
+#
+# 구성
+#   /**             두 노드(armpi_control, armpi_vr_bridge)가 반드시 같은 값을 써야 하는 항목(속도 상한·작업 공간·기구학).
+#                   여기 한 곳에만 둔다(노드별 구역에 같은 키를 다시 쓰지 말 것).
+#   armpi_control   제어기·하드웨어 드라이버
+#   armpi_vr_bridge Protocol v3 UDP 수신기 (armpi_vr_bridge/config/vr_bridge.yaml 과 같은 키. 2026-11-02 21:47 판에서 합침)
+
+/**:
+  ros__parameters:
+    # ── 차체 속도 상한 (docs/01 물리량 변환, 초기 보수값 — 실측 후 조정) ──
+    # 수신기: vx = forward × max_vx, vy = strafe × max_vy(+왼쪽), wz = turn × max_wz(+좌회전)
+    # 제어기: 같은 값으로 cmd_vel 을 한 번 더 자른다(2차 방어).
+    # 차체 상한: 사용자 결정 2026-11-04, 바퀴 방향 실기 시험 전(이전 0.10/0.10/0.60). 가속 상한·max_wheel_pulse 는 그대로
+    chassis.max_vx_m_s: 0.25
+    chassis.max_vy_m_s: 0.25
+    chassis.max_wz_rad_s: 1.2
+
+    # ── 팔 작업 공간 상자 (armpi_arm_base, REP-103: x 앞, y 왼쪽, z 위, m) ──
+    # 수신기는 밖이면 workspace_limit 로 거부, 제어기도 다시 확인한다. 상자 안이라도 IK 해가 없으면 ik_unreachable.
+    # 근거(아래 기구학 값으로 계산, 손끝 = 그리퍼 끝점):
+    #   x_min 0.05 : 베이스 축 바로 위(수평 거리 r≈0)에서는 손끝이 조금만 움직여도 joint1 이 크게 돈다.
+    #                x ≥ 0.05 이면 직선 보간 중 joint1 각속도 ≤ 0.15 m/s ÷ 0.05 m = 3 rad/s → arm.max_joint_speed_rad_s(2 rad/s)가 더 줄인다.
+    #                손이 차체·카메라 쪽(뒤)으로 들어가는 것도 막는다.
+    #   x_max 0.32 : 최대 수평 도달은 약 0.358 m(pitch 0, 팔을 거의 편 자세). 끝 근처는 특이 자세라 안쪽으로 둠.
+    #   y ±0.25    : 옆 0.24 m 위치까지 포함.
+    #   z_min −0.08: 바닥 근처 손끝 높이. 바닥 높이는 실측 전이므로 더 낮추지 말 것.
+    #   z_max 0.32 : 그 위는 대부분 IK 해 없음.
+    #   상자 안 13×13×13 격자 중 84 % 가 pitch −90°..+30° 중 어떤 값으로든 IK 해가 있다. 기본 자세 FK(0.105, 0, 0.075)는 안.
+    #   이 값은 소프트웨어 계산이며 차체·바퀴와의 충돌 여부는 실기 확인 전이다.
+    arm.workspace.x_min: 0.05
+    arm.workspace.x_max: 0.32
+    arm.workspace.y_min: -0.25
+    arm.workspace.y_max: 0.25
+    arm.workspace.z_min: -0.08
+    arm.workspace.z_max: 0.32
+
+    # ── 팔 기구학 (armpi_kinematics::Params) ──
+    # 링크 길이 기본값: Hiwonder 가 공개한 ArmPi FPV 기구학 값(ArmPi Pro 실측 확인 필요). 손끝 = 0.05071 + 0.1126.
+    # 관절 기준(sign·offset)과 관절 범위는 하드웨어 프로필(hardware_profile.yaml)에서 받는다.
+    arm.kinematics.base_height_m: 0.064605  # L1: armpi_arm_base 원점 → 어깨 관절축 높이
+    arm.kinematics.upper_arm_m: 0.10048     # L2: 어깨 → 팔꿈치
+    arm.kinematics.forearm_m: 0.094714      # L3: 팔꿈치 → 손목
+    arm.kinematics.hand_m: 0.16331          # L4: 손목 → 손끝(그리퍼 끝점)
+    arm.kinematics.min_wrist_height_m: 0.0  # 손목 관절축이 armpi_arm_base 보다 낮으면 해 없음
+    arm.kinematics.min_elbow_bend_rad: 0.05 # 거의 일자로 편 자세 거부
+
+armpi_control:
+  ros__parameters:
+    # ── 하드웨어 ──
+    # 로봇마다 다른 장치 값(확장보드 주소·레지스터, GPIO 번호, 서보 타이밍·배정, 차체 치수, 그리퍼 끝값, 켤 때 자세)은
+    # 이 파일에 두지 않고 hardware_profile.yaml 에서 받는다(본보기: hardware_profile.template.yaml).
+    # hardware.mock 은 여기 두지 않는다: launch 인자 mock:=true|false(또는 -p hardware.mock:=true)로만 정한다.
+    #   (이 노드 구역에 적힌 값은 명령행 -p 보다 우선하므로, 여기 있으면 mock:=true 가 무시된다. 노드 기본값 false)
+    hardware.i2c_device: "/dev/i2c-1"
+    hardware.motor_board_address: 52     # 0x34 엔코더 모터 보드(바퀴 4개)
+    hardware.motor_type: 3               # 초기화 레지스터 20 ← [3](엔코더 모터 드라이버 공개 예제의 JGB 모터 값)
+    hardware.servo_port: "/dev/ttyS0"    # GPIO14/15 의 UART. 부트 설정에 따라 /dev/ttyAMA0 일 수 있음(README 참고)
+    hardware.servo_baud: 115200
+    hardware.gpio_chip: "gpiochip0"      # BCM 번호 = line offset
+    hardware.fault_threshold: 5          # 바퀴(I2C)·서보(UART) 쓰기가 이 횟수 연속 실패하면 fault(재시작 필요)
+
+    # ── 버스 서보 반이중 ── (타이밍 값은 하드웨어 프로필)
+    servo.drain_before_turnaround: true  # 쓰기 뒤 tcdrain(마지막 바이트가 다 나간 뒤 방향 전환)
+    servo.read_position: false           # POS_READ 로 실제 위치 읽기. 실기 미검증 → 기본 끔(position_source "commanded")
+    servo.read_rate_hz: 5.0              # 켰을 때 서보마다 읽는 빈도(한 틱에 서보 1개)
+
+    fan.enabled: true
+    buzzer.enabled: true
+    buzzer.estop_beep_sec: 0.1           # 비상정지 latch 때 짧게 울림
+    buzzer.startup_beep: true            # 시작 알림: 정상 1번, 경고(부팅 점검·초기화) 2번, fault 3번
+    buzzer.startup_beep_on_sec: 0.1
+    buzzer.startup_beep_off_sec: 0.15
+    buttons.enabled: true
+    buttons.debounce_sec: 0.05
+    buttons.key2_hold_sec: 2.0
+
+    # ── 차체 ──
+    chassis.rate_hz: 50.0
+    chassis.cmd_timeout_sec: 0.6         # 2차 watchdog: cmd_vel 이 이만큼 없으면 정지
+    chassis.max_cmd_age_sec: 0.5         # header.stamp 가 이보다 오래된(또는 앞선) cmd_vel 은 버림
+    chassis.max_linear_accel_m_s2: 0.6   # 정지·감속은 항상 즉시
+    chassis.max_angular_accel_rad_s2: 4.0  # 회전 가속 상한
+    chassis.angular_sign: 1.0            # angular = angular_sign × wz. 부호는 실기 확인 필요
+    chassis.max_wheel_pulse: 100         # 펄스/10 ms. 넘으면 네 바퀴를 같은 비율로 줄임(vx·vy·wz 를 동시에 크게 주면 넘을 수 있다. 펄스 값은 차체 치수에 따라 다름)
+    chassis.wheel_refresh_sec: 0.5       # 값이 같아도 이 주기로 다시 씀
+
+    # ── 팔 ──
+    arm.rate_hz: 50.0
+    arm.home_on_start: true              # 시작 시 기본 자세로(서보 ID1..6 = home_servo_values, home_duration_ms)
+    arm.home_duration_ms: 1500
+    arm.target_timeout_sec: 0.6          # ArmTarget 이 이만큼 없으면 현재 위치 유지(토크 유지)
+    arm.max_linear_speed_m_s: 0.15       # 손끝 직선 속도 (docs/01). 사용자 결정 2026-11-04, 바퀴 방향 실기 시험 전(이전 0.10)
+    arm.max_pitch_rate_rad_s: 1.0
+    arm.max_gripper_rate_per_s: 1.0
+    arm.max_joint_speed_rad_s: 2.0       # IK 뒤 관절 속도 제한(특이점 근처 급회전 방지). 0 = 끔
+    arm.command_duration_ms: 40          # 틱마다 보내는 MOVE_TIME_WRITE 시간
+    arm.joint5_servo_value: 500          # 손목 회전(서보 2) 고정
+    arm.joint_debug.speed_rad_s: 1.0     # /armpi/arm/joint_debug 이동 시간 = 최대 변화 ÷ 이 속도
+    arm.joint_debug.min_duration_ms: 200
+    arm.joint_debug.max_duration_ms: 3000
+
+    # ── 발행 ──
+    status.rate_hz: 2.0
+    joint_states.rate_hz: 20.0
+    battery.rate_hz: 1.0
+    battery.empty_v: 6.6                 # BatteryState.percentage 대략값(선형): 2셀 기준 가정, 실측 방전 곡선 아님
+    battery.full_v: 8.4
+    battery.low_v: 6.8                   # /armpi/status battery_low
+    hw_state.rate_hz: 10.0               # /armpi_control/hw_state (진단용)
+    vr_bridge_state_topic: "/armpi_vr_bridge/state"
+    vr_bridge_state_timeout_sec: 2.0     # 이보다 오래되면 UDP 세션 없음으로 봄(joint_debug 허용 판단)
+
+armpi_vr_bridge:
+  ros__parameters:
+    # armpi_vr_bridge/config/vr_bridge.yaml 과 같은 키·값(속도 상한·작업 공간·기구학은 위 /** 에서 받음).
+    bind_address: "0.0.0.0"
+    port: 5001                       # 조종(UDP). ACK 는 같은 소켓으로 보낸 주소·포트에
+    poll_interval_sec: 0.02          # 수신 루프 poll 주기(패킷이 없을 때도 watchdog 검사)
+    rx_stall_timeout_sec: 0.5        # 수신 루프가 이만큼 멈추면 정지·새 중립 요구
+
+    base_watchdog_sec: 0.4           # 차체: 마지막 인정 command 후 정지까지
+    arm_watchdog_sec: 0.4            # 팔: 마지막 인정 arm_command 후 현재 위치 유지까지(토크 유지)
+    lease_sec: 1.0                   # 소유권 유지. 두 watchdog 보다 커야 함
+    control_state_max_age_sec: 2.0   # /armpi/control_state 가 이보다 오래되면 활성 명령 not_owner
+
+    publish_rate_hz: 20.0            # /armpi/cmd_vel 주기 발행, 팔 active 동안 ArmTarget 재발행
+    state_rate_hz: 2.0               # /armpi_vr_bridge/state 주기(+ 변화 시 즉시)
+    stats_log_period_sec: 10.0
+    accept_estop_from_any_client: true
+    retired_limit: 1024
+
+    # 허용 송신 주소(CIDR). 비우면 모두 허용. 빈 목록은 이 줄을 생략한다(Humble YAML 은 빈 배열 자료형을 못 정함).
+    # allowed_sources: ["192.168.2.0/24"]
+
+    discovery.enabled: true
+    discovery.port: 5002
+    discovery.name: ""               # 비우면 hostname(최대 32자)
+    discovery.max_replies_per_second: 20
+
+    frame_id: "base_link"
+    arm_frame_id: "armpi_arm_base"
+    cmd_vel_topic: "/armpi/cmd_vel"
+    arm_target_topic: "/armpi/arm/target"
+    estop_request_topic: "/armpi/estop_request"
+    control_state_topic: "/armpi/control_state"
+
+# 로봇 안 웹 조종기(deploy/systemd/armpi-web.service, C++ armpi_web_gateway). 기본값은 파이썬 조종기와 같다.
+armpi_web_gateway:
+  ros__parameters:
+    robot: "127.0.0.1"         # 조종은 Protocol v3 UDP 로만(VR 과 같은 안전 경로)
+    port: 5001
+    http_bind: "0.0.0.0"       # 같은 망의 휴대폰·PC 브라우저가 접속(인증 없음)
+    http_port: 18765
+    session: "auto"            # 0.0.0.0 이면 on-demand: 조종권을 가진 화면이 있을 때만 v3 세션
+    idle_release_s: 60.0       # 조작 없이 이 시간이 지나면 조종권·세션을 놓음(0 = 안 놓음)
+    ack_timeout_s: 0.30
+    camera_port: 8080
+    camera_qos_profile: ""     # "sensor_data" 면 화면 영상을 best-effort 로 받음(선택지, 기본 끔 — docs/11)
+    # 화면 조작 속도(바꾸려면 여기만 고친다). 실제 상한은 armpi_control·armpi_vr_bridge 의 chassis.max_*·arm.max_* 가 정한다.
+    arm_speed: 0.15            # 팔 방향 버튼을 누르는 동안 손끝 목표 이동 속도 m/s. 사용자 결정 2026-11-04, 바퀴 방향 실기 시험 전(이전 0.05)
+    pitch_speed: 0.6           # 손목 pitch 목표 변화율 rad/s
+    gripper_speed: 0.8         # 그리퍼 목표 변화율 /s
+    ui_default_speed: 0.6      # 휴대폰 화면 속도 버튼 기본값(0–1, 60 %). 화면에 저장된 값이 있으면 그것을 씀. 사용자 결정 2026-11-04, 바퀴 방향 실기 시험 전(이전 0.3)
+
+# KEY2 종료(deploy/systemd/armpi-shutdown.service, C++ armpi_power)
+armpi_power:
+  ros__parameters:
+    trigger: "topic"           # 지금과 같은 동작. "file" 은 docs/12 E2 준비(제어기 변경 전에는 쓰지 않음)
+    dry_run: false

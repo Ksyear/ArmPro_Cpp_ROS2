@@ -1,0 +1,18 @@
+[Unit]
+Description=ArmPi KEY2 shutdown listener (C++ armpi_power: /armpi/shutdown_requested -> systemctl poweroff)
+# KEY2 를 2초 누르면 armpi_control 이 /armpi/shutdown_requested(std_msgs/Empty) 를 발행하고, 이 노드가 시스템을 끈다.
+# 같은 ROS 망(ROS_DOMAIN_ID 0, ROS_LOCALHOST_ONLY=0)의 누구나 이 토픽으로 끌 수 있다(docs/11, 선택지는 docs/12 E).
+# 매개변수: armpi_bringup/config/armpi.yaml 의 armpi_power 구역. v1 은 ros2 CLI(파이썬, 약 110 MB)였다.
+After=armpi.service
+Wants=armpi.service
+
+[Service]
+Type=simple
+Environment=ROS_DOMAIN_ID=0
+Environment=HOME=/root
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && exec /opt/armpi/ros2_ws/install/lib/armpi_power/armpi_power_node --ros-args --params-file /opt/armpi/ros2_ws/install/share/armpi_bringup/config/armpi.yaml'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,45 @@
+# 시험용 하드웨어 프로필 — 실제 로봇 값이 아니다(일부러 다르게 고른 값).
+# 가짜 하드웨어 실행(armpi_mock.launch.py)과 시험 전용. armpi_hardware::test_hardware_profile() 과 같은 값.
+# 실제 로봇에 쓰면 팔·바퀴가 엉뚱하게 움직일 수 있다.
+/**:
+  ros__parameters:
+    arm.kinematics.j1_sign: 1.0
+    arm.kinematics.j1_offset: 0.0
+    arm.kinematics.j2_sign: 1.0
+    arm.kinematics.j2_offset: -1.4
+    arm.kinematics.j3_sign: -1.0
+    arm.kinematics.j3_offset: 0.0
+    arm.kinematics.j4_sign: 1.0
+    arm.kinematics.j4_offset: 0.1
+    arm.kinematics.joint_min: [-2.0943951023931953, -1.4, -2.0943951023931953, -1.9]
+    arm.kinematics.joint_max: [2.0943951023931953, 1.4, 2.0943951023931953, 1.9]
+
+armpi_control:
+  ros__parameters:
+    chassis.a_mm: 100.0
+    chassis.b_mm: 90.0
+    chassis.wheel_diameter_mm: 100.0
+    chassis.pulse_per_cycle: 6000.0
+    arm.servo_ids: [6, 3, 4, 5, 2, 1]
+    arm.joint_directions: [1, -1, 1, 1, 1, 1]
+    arm.home_servo_values: [100, 500, 355, 792, 128, 500]
+    arm.gripper.open_value: 100
+    arm.gripper.close_value: 400
+    arm.gripper.servo_min: 100
+    arm.gripper.servo_max: 470
+    hardware.expansion_board_address: 96
+    hardware.battery_register: 2
+    hardware.dc_motor_register: 40
+    hardware.dc_motor_sign: 1
+    fan.motor_index: 2
+    fan.speed: 60
+    hardware.servo_rx_con_bcm: 17
+    hardware.servo_tx_con_bcm: 22
+    buzzer.bcm: 24
+    buttons.key1_bcm: 25
+    buttons.key2_bcm: 26
+    servo.pre_write_delay_us: 400
+    servo.post_write_delay_us: 300
+    servo.read_turnaround_delay_us: 2500
+    servo.read_timeout_ms: 12
+    servo.read_attempts: 3

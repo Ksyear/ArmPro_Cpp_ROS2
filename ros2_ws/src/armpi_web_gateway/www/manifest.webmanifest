@@ -1,0 +1,16 @@
+{
+  "name": "ArmPi 조종기",
+  "short_name": "ArmPi",
+  "description": "ArmPi Pro 메카넘 차체·팔 터치 조종 화면",
+  "lang": "ko",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0d1014",
+  "theme_color": "#0d1014",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ]
+}

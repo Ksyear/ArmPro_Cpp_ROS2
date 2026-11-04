@@ -1,0 +1,11 @@
+# ArmPro_Cpp_ROS2 개발·시험 컨테이너 (Ubuntu 22.04 + ROS 2 Humble).
+#   docker build -t armpi-ctl-dev:humble -f docker/Dockerfile.dev .
+#   bash scripts/test_all.sh            # 이미지 이름은 ARMPI_CTL_DEV_IMAGE 로 바꿀 수 있다
+# arm64(Apple Silicon, Raspberry Pi)와 amd64 모두에서 빌드된다.
+FROM ros:humble-ros-base-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake python3-colcon-common-extensions python3-pytest \
+      libgpiod-dev gpiod linux-libc-dev procps psmisc iproute2 \
+      ros-humble-rosbridge-server ros-humble-usb-cam ros-humble-image-transport-plugins \
+      ros-humble-web-video-server \
+    && rm -rf /var/lib/apt/lists/*
