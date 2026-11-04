@@ -895,7 +895,8 @@ def main(argv=None):
         port = port or found[0]["port"]
     port = port or CONTROL_PORT
     home = dict(zip(("x", "y", "z", "pitch", "gripper"), args.home)) if args.home else dict(DEFAULT_HOME)
-    video = args.camera_url or ("http://%s:%d/stream?topic=/usb_cam/image_raw&type=ros_compressed"
+    # qos_profile=sensor_data(best-effort): 기본(RELIABLE)으로 받으면 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기)
+    video = args.camera_url or ("http://%s:%d/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data"
                                 % (robot, args.camera_port))
     public = args.bind not in LOOPBACK_NAMES and not args.bind.startswith("127.")
     on_demand = args.session == "on-demand" or (args.session == "auto" and public)

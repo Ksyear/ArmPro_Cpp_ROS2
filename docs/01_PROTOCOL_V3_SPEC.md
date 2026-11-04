@@ -142,4 +142,4 @@ v2에서 바뀌지 않은 규칙은 v2 문서를 그대로 따른다. 이 문서
 | `/armpi/reset_estop` | std_srvs/Trigger | → 로봇 | 해제 |
 | `/armpi/arm/home` | std_srvs/Trigger | → 로봇 | 팔 기본 자세(비상정지·조종 중엔 거부) |
 | `/armpi/arm/joint_debug` | sensor_msgs/JointState | → 로봇 | 디버그용 관절 직접 지정(조종 세션이 없을 때만) |
-| 카메라 | HTTP MJPEG | 로봇 → | `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed` |
+| 카메라 | HTTP MJPEG | 로봇 → | `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |

@@ -159,7 +159,7 @@ armpi_web_gateway:
     idle_release_s: 60.0       # 조작 없이 이 시간이 지나면 조종권·세션을 놓음(0 = 안 놓음)
     ack_timeout_s: 0.30
     camera_port: 8080
-    camera_qos_profile: ""     # "sensor_data" 면 화면 영상을 best-effort 로 받음(선택지, 기본 끔 — docs/11)
+    camera_qos_profile: "sensor_data"  # 화면 영상을 best-effort 로 받음. 빈 값(RELIABLE)은 로봇 안 ROS 통신을 막을 수 있음(2026-11-04 실기, docs/11)
     # 화면 조작 속도(바꾸려면 여기만 고친다). 실제 상한은 armpi_control·armpi_vr_bridge 의 chassis.max_*·arm.max_* 가 정한다.
     arm_speed: 0.15            # 팔 방향 버튼을 누르는 동안 손끝 목표 이동 속도 m/s. 사용자 결정 2026-11-04, 바퀴 방향 실기 시험 전(이전 0.05)
     pitch_speed: 0.6           # 손목 pitch 목표 변화율 rad/s

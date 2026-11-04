@@ -13,6 +13,9 @@ SupplementaryGroups=dialout i2c gpio video
 Environment=ROS_DOMAIN_ID=0
 Environment=ROS_LOCALHOST_ONLY=0
 Environment=HOME=/home/ubuntu
+# 시작 전에 쓰이지 않는 Fast DDS 공유 메모리 흔적을 정리한다(실패해도 계속, -).
+# 2026-11-04 실기: 서비스 재시작 뒤 로봇 안 ROS 통신이 막힌 일이 있었다(docs/11). 배포 뒤에는 서비스 재시작보다 재부팅을 권장한다.
+ExecStartPre=-/opt/ros/humble/bin/fastdds shm clean
 ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && exec ros2 launch armpi_bringup armpi.launch.py'
 # 제어 노드가 멈추거나 비정상 종료해도 모터 보드가 마지막 속도를 유지하지 않도록 네 바퀴 속도를 0 으로 쓴다
 # (모터 보드 I2C 0x34, 레지스터 51 = 4바퀴 속도. Hiwonder 엔코더 모터 드라이버 공개 예제 기준). 실패해도 서비스 결과에는 영향 없음(-).

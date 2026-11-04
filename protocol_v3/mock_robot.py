@@ -1283,7 +1283,7 @@ class MockRobot:
                     except OSError:
                         pass
                     return
-                body = "가짜 ArmPi 카메라: /stream?topic=/usb_cam/image_raw&type=ros_compressed\n".encode("utf-8")
+                body = "가짜 ArmPi 카메라: /stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data\n".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

@@ -61,6 +61,9 @@ armpi_power (rclcpp, std_msgs 만)
 | `armpi-web.service` | 파이썬 `armpi_mac_controller.py`(+ rosbridge 로 상태) | **C++ `armpi_web_gateway_node`**(rclcpp 로 상태) |
 | `armpi-shutdown.service` | `ros2 topic echo --once`(파이썬 CLI, 약 110 MB) + `systemctl poweroff` | **C++ `armpi_power_node`** |
 
+- 영상: 게이트웨이가 화면에 알려 주는 주소는 `…&type=ros_compressed&qos_profile=sensor_data`(`camera_qos_profile`, 기본 `sensor_data`). 원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다. 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절).
+- `armpi.service`는 시작 전에 `fastdds shm clean`(쓰이지 않는 공유 메모리 흔적 정리)을 한다. 소프트웨어를 바꾼 뒤에는 서비스 재시작보다 재부팅을 권장한다.
+
 로봇 안에 남는 파이썬은 ROS 2 표준 부품뿐이다: `ros2 launch`(시작 관리), rosbridge·rosapi(Mac 조종기·VR 이 쓰는 9090). 이것들은 바꾸면 통신 규격이 달라지므로 그대로 둔다.
 v1 에서 잰 메모리(참고, 섞인 부팅 상태): 파이썬 웹 조종기 20 MB, 종료 대기 57 MB + ros2 데몬 53 MB, C++ 노드 각 22–23 MB. v2 의 메모리는 아직 재지 않았다.
 

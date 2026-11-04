@@ -71,6 +71,8 @@ ros2 launch armpi_bringup armpi.launch.py        # 실제 로봇(하드웨어 �
 - `config/test_hardware_profile.yaml`은 가짜 하드웨어·시험 전용 값이다. **실제 로봇 값이 아니다**(일부러 다르게 골랐다). 실제 로봇에 쓰면 팔·바퀴가 엉뚱하게 움직일 수 있다.
 
 - 로봇에서 자동 시작하려면 `deploy/systemd/`의 유닛을 쓴다. 카메라 영상(큰 메시지)에는 `deploy/sysctl/60-armpi-dds.conf`가 필요하다.
+- 카메라 영상: `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data`. **원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다.** 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절).
+- 소프트웨어를 바꾼 뒤에는 서비스 재시작보다 **로봇 재부팅**을 권장한다(같은 실기).
 - 조종기: `clients/mac_controller/README_KO.md`, 휴대폰 화면 `http://<로봇 IP>:18765/mobile`.
 - VR 클라이언트를 만들 때: `docs/08_VR_HANDOFF_KO.md`, `docs/01_PROTOCOL_V3_SPEC.md`, `clients/vr_handoff/ArmPiV3Messages.cs`.
 

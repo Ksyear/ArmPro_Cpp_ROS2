@@ -109,7 +109,7 @@ flowchart TB
 
 - 카메라 원시 `/usb_cam/image_raw`(640×480 rgb8)는 한 장 921,600 B 다. v1 실기에서 best-effort 구독은 12.56 Hz 를 받았지만 RELIABLE 구독(web_video_server)에는 새 영상이 오지 않았다(`11_KNOWN_LIMITATIONS_KO.md` 00절, 원인은 추정).
 - v2: `armpi.launch.py` 가 `armpi_bringup/config/fastdds_armpi.xml`(공유 메모리 세그먼트 8 MiB, UDPv4 버퍼 4 MiB)을 적용하고(`dds_profile:=""` 이면 끔), 이미지에 `/etc/sysctl.d/60-armpi-dds.conf`(소켓 버퍼 상한 16 MiB·기본 4 MiB, IP 조각 설정)를 넣는다. **실기 미확인.**
-- 선택지(기본 끔): 웹 화면 영상을 best-effort 로 받기 — `armpi.yaml` 의 `armpi_web_gateway.camera_qos_profile: "sensor_data"`(web_video_server 스트림 주소의 `qos_profile`). 화면은 이미 압축 토픽(`type=ros_compressed`)을 받는다.
+- **기본값(2026-11-04 실기 뒤): 웹 화면 영상을 best-effort 로 받는다** — `armpi.yaml` 의 `armpi_web_gateway.camera_qos_profile: "sensor_data"`(web_video_server 스트림 주소의 `qos_profile`). 원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다. 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절). 화질은 같고, 늦게 온 장을 다시 보내지 않고 버리는 차이뿐이다.
 
 ## 5. 안전 사슬 (끊김 → 정지)
 

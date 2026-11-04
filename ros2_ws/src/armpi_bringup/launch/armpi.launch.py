@@ -20,7 +20,9 @@
   dds_profile   Fast DDS XML(FASTRTPS_DEFAULT_PROFILES_FILE). 기본 config/fastdds_armpi.xml(대용량 영상용 버퍼·공유 메모리).
                 "" 이면 Fast DDS 기본값
 설치되지 않은 패키지(usb_cam, web_video_server, rosbridge_server, armpi_vr_bridge)는 경고만 남기고 건너뛴다.
-카메라 스트림: http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed
+카메라 스트림: http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data
+  원시 영상은 반드시 qos_profile=sensor_data(best-effort)로 받는다. 기본(RELIABLE)으로 받으면(스냅샷·type=mjpeg 포함)
+  로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, docs/11).
 """
 
 import os

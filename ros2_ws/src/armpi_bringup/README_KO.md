@@ -34,7 +34,7 @@ ros2 run armpi_control armpi_control_node --ros-args --params-file <armpi.yaml> 
 ```
 
 `armpi.launch.py` 인자: `params_file`, `hardware_profile`(4.1절), `mock`, `vr_bridge`, `camera`, `video_device`(/dev/video0), `pixel_format`(yuyv2rgb), `image_width`/`image_height`(640/480), `framerate`(15.0), `web_video`, `web_video_port`(8080), `rosbridge`, `rosbridge_port`(9090). 설치되지 않은 선택 패키지는 경고만 남기고 건너뛴다.
-카메라 스트림: `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed`
+카메라 스트림: `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data`
 
 ## 4. 매개변수 파일 `config/armpi.yaml`
 

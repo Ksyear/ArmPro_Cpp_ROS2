@@ -339,7 +339,7 @@ def main():
         print("[SKIP] 카메라 스트림(--camera 빈 값)", flush=True)
     else:
         try:
-            with urllib.request.urlopen(args.camera + "/stream?topic=/usb_cam/image_raw&type=ros_compressed",
+            with urllib.request.urlopen(args.camera + "/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data",
                                         timeout=3) as r:
                 head = r.read(4096)
                 ctype = r.headers.get("Content-Type", "")

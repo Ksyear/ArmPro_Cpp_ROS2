@@ -707,7 +707,7 @@ ros2 topic pub --once /armpi/estop_request std_msgs/msg/String "{data: '{\"sourc
 |---|---|
 | Mac 조종기 화면(`clients/mac_controller/`, `04_APPS_HOWTO_KO.md`) | 채널 상태, 마지막 reason, ACK 지연, 배터리, 팔 목표·현재값 |
 | rosbridge 9090 | Mac 조종기가 `/armpi/status`를 구독해 표시 |
-| web_video_server 8080 | `http://<IP>:8080/` 카메라 토픽 목록, `…/stream?topic=/usb_cam/image_raw&type=ros_compressed` |
+| web_video_server 8080 | `http://<IP>:8080/` 카메라 토픽 목록, `…/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |
 | `ros2 topic echo` | 위 표 |
 
 ### 16.3 시스템

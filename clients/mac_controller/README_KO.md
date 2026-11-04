@@ -43,7 +43,7 @@ python3 clients/mac_controller/armpi_mac_controller.py --robot 192.168.0.50   # 
 | `--allow-host` | | `--bind`가 공개 주소일 때 추가로 받을 Host 이름. IP 주소와 이 기기의 호스트 이름(`armpi-ros2`, `armpi-ros2.local`)은 기본으로 받는다 |
 | `--exit-with-stdin` | | 표준 입력이 닫히면(부모 앱이 끝나면) 중립·`disconnect`를 보내고 끝낸다(맥 앱이 쓴다) |
 | `--no-rosbridge` / `--rosbridge-port` | 9090 | rosbridge 사용 여부·포트 |
-| `--camera-port` / `--camera-url` | 8080 | 영상 주소 `http://<로봇>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed` |
+| `--camera-port` / `--camera-url` | 8080 | 영상 주소 `http://<로봇>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |
 | `--ack-timeout` | 0.30 | ACK 허용 지연(s, 사양 값). Wi-Fi가 불안정할 때만 늘린다. |
 | `--home x,y,z,pitch,gripper` | 0.1047,0,0.0753,−1.0263,0 | 팔 시작 목표(`armpi_v3_client.DEFAULT_HOME`, 로봇 부팅 자세에 해당하는 손끝 위치) |
 | `--arm-speed` / `--pitch-speed` / `--gripper-speed` | 0.15 m/s, 0.6 rad/s, 0.8 /s | 키를 누르는 동안 목표가 바뀌는 속도. 로봇은 별도 상한(0.15 m/s, 1.0 rad/s, 1.0 /s)으로 보간한다 |

@@ -82,8 +82,10 @@ int main(int argc, char** argv) {
   const double ui_default_speed = node->declare_parameter<double>("ui_default_speed", 0.6);
   const int camera_port = static_cast<int>(node->declare_parameter<int64_t>("camera_port", 8080));
   std::string video_url = node->declare_parameter<std::string>("camera_url", "");
-  // "sensor_data" 등: web_video_server 3.x 스트림 주소의 qos_profile(best-effort 영상, 기본 끔)
-  const std::string camera_qos = node->declare_parameter<std::string>("camera_qos_profile", "");
+  // web_video_server 스트림 주소의 qos_profile. 기본 "sensor_data"(best-effort).
+  // 원시 영상(약 0.9 MB/장)을 기본(RELIABLE)으로 받으면 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, docs/11).
+  // 빈 값이면 qos_profile 을 붙이지 않는다(web_video_server 기본 = RELIABLE, 권장하지 않음).
+  const std::string camera_qos = node->declare_parameter<std::string>("camera_qos_profile", "sensor_data");
   std::string www_dir = node->declare_parameter<std::string>("www_dir", "");
 
   if (home_v.size() != 5) {

@@ -70,7 +70,7 @@
 | B13 | 배터리: `ros2 topic echo --once /armpi/battery` | `voltage`가 멀티미터 값과 비슷하다 | 두 값. `percentage`는 6.6–8.4 V 선형 대략값이다 [코드] |
 | B14 | 팬: 귀·손으로 확인, `/armpi/status`의 `fan_ok` | 팬이 돈다, `fan_ok: true` | |
 | B14b | 부저(v2.1부터): 전원을 넣거나 `armpi.service`를 다시 시작한 직후 소리를 듣는다 | 짧게 **1번**(정상). 2번이면 경고(`boot_warnings`·`warnings`), 3번이면 fault | 들린 횟수. 재시작하면 팔이 기본 자세로 움직이므로 팔 주변을 비운다 |
-| B15 | 카메라: `v4l2-ctl --list-devices`, `ros2 topic hz /usb_cam/image_raw`, 브라우저 `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed` | 영상이 보인다 | fps. 기본 640×480, 15 fps, `yuyv2rgb` [코드: `armpi.launch.py`]. v2.1 기본: 밝기 0(`camera_brightness`), 전원 주파수 60 Hz(`camera_power_line_hz`). `v4l2-ctl -d /dev/video0 --get-ctrl brightness,power_line_frequency`로 `0`, `2`인지 본다 |
+| B15 | 카메라(원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다. 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절).): `v4l2-ctl --list-devices`, `ros2 topic hz /usb_cam/image_raw`, 브라우저 `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` | 영상이 보인다 | fps. 기본 640×480, 15 fps, `yuyv2rgb` [코드: `armpi.launch.py`]. v2.1 기본: 밝기 0(`camera_brightness`), 전원 주파수 60 Hz(`camera_power_line_hz`). `v4l2-ctl -d /dev/video0 --get-ctrl brightness,power_line_frequency`로 `0`, `2`인지 본다 |
 | B16 | 재부팅 후 B7·B8·B12 반복 | 같은 결과 | |
 
 ### B절 자동 수집 도구 `tools/first_boot_check.sh` (2026-11-04 추가)

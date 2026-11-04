@@ -19,7 +19,7 @@ VR/XR 구현 담당자와 역할은 **아직 정해지지 않았다**(친구·�
 | 규격 | `docs/01_PROTOCOL_V3_SPEC.md` (Protocol v2를 넓힌 것) |
 | 조종 통로 | UDP **5001**, JSON 1개 = 데이터그램 1개, 같은 소켓으로 ACK |
 | 로봇 찾기 | UDP **5002** `ARMPI_DISCOVER/1\|<nonce>` → `ARMPI_HERE/1\|…\|3` |
-| 영상 | HTTP MJPEG `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed` |
+| 영상 | HTTP MJPEG `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |
 | 상태(선택) | rosbridge WebSocket 9090, `/armpi/status`(JSON 문자열) |
 | VR 쪽 할 일 | ① 번호 2→3 ② `command`에 `strafe` 추가 ③ 새 `arm_command` 송신 ④ 채널별 ACK 처리 ⑤ 새 reason 2개 ⑥ 검색 문자열 `ARMPI_*` ⑦ Unity↔ROS 좌표 변환 ⑧ 컨트롤러→팔 매핑 |
 | 바로 쓸 코드 | `clients/vr_handoff/ArmPiV3Messages.cs` (메시지 만들기·ACK 해석·검색·좌표 변환·IK 미리 확인·매핑 제안, Unity 의존 없음) |
@@ -331,12 +331,13 @@ mapper.Release();                                  // 그리고 control_active:f
 
 | 항목 | 내용 |
 |---|---|
-| 스트림 | `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed` |
-| 한 장 | `http://<IP>:8080/snapshot?topic=/usb_cam/image_raw&type=ros_compressed` |
+| 스트림 | `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |
+| 한 장 | `http://<IP>:8080/snapshot?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data` |
 | 서버 | web_video_server 3.1.0 (Humble apt). 이미지 20단계 로그에 설치 기록 [빌드 기록] |
 | 형식 | `multipart/x-mixed-replace;boundary=boundarydonotcross`, 부분마다 `Content-Length` + JPEG |
 | 해상도·fps | `armpi.launch.py` 기본값: `/dev/video0`, 640×480, 15 fps, `pixel_format:=yuyv2rgb`(JPEG 압축 전송용) [코드]. 실제 카메라로는 미확인 |
 | 인증 | 없음 |
+| QoS | **원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다. 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절).** Unity 수신기도 주소에 `qos_profile=sensor_data` 를 그대로 붙인다 |
 
 
 ### 8.1 상태 표시(선택): rosbridge 9090
