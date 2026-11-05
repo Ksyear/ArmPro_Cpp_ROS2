@@ -62,7 +62,7 @@ public class MainActivity extends Activity {
     static final String PREFS = "armpi";
     static final String KEY_RECENT = "recent";
     static final int MAX_RECENT = 5;
-    static final String UA_MARK = " ArmPiController-Android/1.1";
+    static final String UA_MARK = " ArmPiController-Android/1.2";
     static final int BG = 0xFF0D1014, PANEL = 0xFF1B2128, LINE = 0xFF2E3640, TEXT = 0xFFEEF2F7, DIM = 0xFFA8B2C0,
             ACCENT = 0xFF4EA1FF, BAD = 0xFFFF6B6B, OK = 0xFF3ECF8E;
 

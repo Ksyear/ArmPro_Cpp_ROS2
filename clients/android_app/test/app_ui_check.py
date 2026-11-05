@@ -16,7 +16,7 @@
     file:// 화면(Origin: null)이면 게이트웨이가 POST 를 거부한다는 근거.
 
 실행: /usr/bin/python3 -B clients/android_app/test/app_ui_check.py [--out <폴더>] [--keep]
-결과: work/logs/app_ui_v1_1_<시각>/ (results.json, summary.txt, 캡처 PNG, chrome·gateway·mock 로그)
+결과: work/logs/app_ui_v1_2_<시각>/ (results.json, summary.txt, 캡처 PNG, chrome·gateway·mock 로그)
 """
 
 import argparse
@@ -46,7 +46,7 @@ IMAGE = os.environ.get("ARMPI_CTL_DEV_IMAGE", "armpi-ctl-dev:humble")
 HOST = "127.0.0.1"
 WEB_PORT, CAM_PORT, RB_PORT = 18765, 8080, 9090
 UA = ("Mozilla/5.0 (Linux; Android 14; SM-G781N) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/130.0.0.0 Mobile Safari/537.36 ArmPiController-Android/1.1")
+      "Chrome/130.0.0.0 Mobile Safari/537.36 ArmPiController-Android/1.2")
 VIDEO_URL = "http://%s:%d/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data" % (HOST, CAM_PORT)
 PAGE_URL = "http://%s:%d/app-ui/control.html?video=%s" % (HOST, WEB_PORT, urllib.parse.quote(VIDEO_URL, safe=""))
 RESULTS = []
@@ -505,7 +505,13 @@ LAYOUT_JS = r"""
     speedOn: [...document.querySelectorAll('#speed button.on')].map(b => b.dataset.v),
     armOpen: document.body.classList.contains('arm-open'), camBigOn: document.body.classList.contains('cam-big'),
     locked: document.body.classList.contains('locked'), estopped: document.body.classList.contains('estopped'),
-    msg: document.querySelector('#msg').textContent, armEnabledUi: !document.body.classList.contains('armoff')};
+    msg: document.querySelector('#msg').textContent, armEnabledUi: !document.body.classList.contains('armoff'),
+    chipsCut: (() => { const box = document.querySelector('#chips').getBoundingClientRect(), bad = [];
+      document.querySelectorAll('#chips .chip').forEach(c => { if (c.hidden) return; const r = c.getBoundingClientRect();
+        if (r.left < box.left - 0.5 || r.right > box.right + 0.5 || r.top < box.top - 0.5 || r.bottom > box.bottom + 0.5 || c.scrollWidth > c.clientWidth + 1 || r.right > W + 0.5)
+          bad.push(c.textContent); }); return bad; })(),
+    chipsShown: [...document.querySelectorAll('#chips .chip')].filter(c => !c.hidden).map(c => c.textContent),
+    barH: document.querySelector('#bar').getBoundingClientRect().height};
 })()
 """
 
@@ -538,7 +544,31 @@ def check_layout(ph, cdp, portrait, label):
     check(ph, "%s: 조이스틱 지름 ≥ 120 px, 비상정지 지름 ≥ 88 px" % label, j and j["w"] >= 120 and L["estop"]["w"] >= 88,
           "조이스틱 %.0f, 비상정지 %.0f" % (j["w"] if j else -1, L["estop"]["w"]))
     check(ph, "%s: 비상정지 버튼이 맨 위(가려지지 않음)" % label, L["estopOnTop"])
+    check(ph, "%s: 상태 칩이 잘리지 않음(%d개, 상태 줄 높이 %.0f px)" % (label, len(L["chipsShown"]), L["barH"]), not L["chipsCut"],
+          {"잘림": L["chipsCut"], "칩": L["chipsShown"]})
     return L
+
+
+TOAST_JS = r"""
+(() => { const t = document.querySelector('#toast'); if (!t.classList.contains('show')) return null;
+  const r = t.getBoundingClientRect(), cam = document.querySelector('#cam').getBoundingClientRect();
+  const hits = [];
+  document.querySelectorAll('button').forEach(b => { const cs = getComputedStyle(b); if (cs.display === 'none' || cs.visibility === 'hidden' || b.closest('[hidden]')) return;
+    const q = b.getBoundingClientRect(); if (q.width === 0 || b.offsetParent === null) return;
+    if (!(q.right <= r.left || r.right <= q.left || q.bottom <= r.top || r.bottom <= q.top)) hits.push(b.id || b.textContent.trim().slice(0, 10)); });
+  return {inCam: r.left >= cam.left - 0.5 && r.right <= cam.right + 0.5 && r.top >= cam.top - 0.5 && r.bottom <= cam.bottom + 0.5,
+          parent: t.parentElement.id, hits, pe: getComputedStyle(t).pointerEvents, text: t.textContent}; })()
+"""
+
+
+def check_toast(ph, cdp, label, expect_parent="camfoot"):
+    T = cdp.eval(TOAST_JS)
+    if expect_parent == "camfoot":
+        ok = T and T["parent"] == "camfoot" and T["inCam"] and not T["hits"] and T["pe"] == "none"
+    else:
+        ok = T and T["parent"] == expect_parent and not T["hits"] and T["pe"] == "none"
+    check(ph, "%s: 알림이 %s 안에 뜨고 버튼을 가리지 않음·터치 통과" % (label, "카메라 칸" if expect_parent == "camfoot" else "메뉴"), ok, T)
+    return T
 
 
 def tap(cdp, sel, hold=0.08, finger=7):
@@ -609,7 +639,7 @@ def phase_ui(out, chrome, rs):
     origin = cdp.eval("location.origin")
     check(ph, "화면 출처 = 로봇 웹 조종기와 같은 http://127.0.0.1:18765", origin == "http://%s:%d" % (HOST, WEB_PORT), origin)
     got = wait_for(lambda: "대기" in cdp.eval("document.querySelector('#cLink').textContent"), 6)
-    check(ph, "/api/config·/api/state 받음 → '대기 · 조작하면 연결'", bool(got), cdp.eval("document.querySelector('#cLink').textContent"))
+    check(ph, "/api/config·/api/state 받음 → '연결 대기'", bool(got), cdp.eval("document.querySelector('#cLink').textContent"))
     vid = wait_for(lambda: (lambda v: v if v and v[0] > 0 else None)(cdp.eval("[document.querySelector('#video').naturalWidth, document.querySelector('#video').naturalHeight]")), 6)
     src = cdp.eval("document.querySelector('#video').getAttribute('src')") or ""
     check(ph, "영상: 앱이 넘긴 주소(IP:8080 sensor_data)로 받아 표시", bool(vid) and src.startswith(VIDEO_URL), "%s %s" % (vid, src))
@@ -620,9 +650,10 @@ def phase_ui(out, chrome, rs):
 
     shots = {}
 
-    def shot(name):
-        time.sleep(0.45)
-        wait_for(lambda: not cdp.eval("document.querySelector('#toast').classList.contains('show')"), 5)   # 앞 조작의 알림이 사라진 뒤
+    def shot(name, keep_toast=False):
+        if not keep_toast:
+            time.sleep(0.45)
+            wait_for(lambda: not cdp.eval("document.querySelector('#toast').classList.contains('show')"), 5)   # 앞 조작의 알림이 사라진 뒤
         path = os.path.join(out, name)
         w, h = cdp.shot(path)
         shots[name] = [w, h]
@@ -693,10 +724,15 @@ def phase_ui(out, chrome, rs):
     cdp.touch("touchStart", [(2, (f["cx"], f["cy"]))])
     time.sleep(0.5)
     arm_in = [b for _, b in tr.bodies("/api/input", t0) if (b.get("arm") or {}).get("x") == 1]
-    x1 = ((rs.get() or {}).get("arm_target") or {}).get("x")
+    # 가짜 로봇 상태는 2 Hz — 목표 증가가 상태에 나타날 때까지(최대 2 s) 기다린다
+    x1 = wait_for(lambda: (lambda v: v if v is not None and x0 is not None and v - x0 > 0.03 else None)(
+        ((rs.get() or {}).get("arm_target") or {}).get("x")), 2) or ((rs.get() or {}).get("arm_target") or {}).get("x")
     check(ph, "팔 '앞' 누름 → /api/input arm.x=1", bool(arm_in), arm_in[-1] if arm_in else None)
     check(ph, "→ 가짜 로봇 팔 목표 x 증가", x0 is not None and x1 is not None and x1 - x0 > 0.03, "x %s → %s" % (x0, x1))
-    shot("shot_landscape_2400x1080_2_arm_panel.png")
+    rej = wait_for(lambda: "팔 목표 거부" in (cdp.eval("document.querySelector('#toast').classList.contains('show') && document.querySelector('#toast').textContent") or ""), 3)
+    check(ph, "'앞'을 계속 누름 → 가짜 로봇 작업 공간 끝에서 '팔 목표 거부' 알림", bool(rej))
+    check_toast(ph, cdp, "가로 팔 패널")
+    shot("shot_landscape_2400x1080_2_arm_panel_with_notice.png", keep_toast=True)
     c = cdp.rect("#bArmClose")
     t_close = tr.mark()
     second_finger_tap(cdp, "#bArmClose")
@@ -705,18 +741,20 @@ def phase_ui(out, chrome, rs):
     check(ph, "팔 버튼을 누른 채 '닫기' → 패널 닫힘", bool(closed))
     check(ph, "패널 닫을 때 팔 입력 중립(arm 모두 0)", bool(zero), tr.bodies("/api/input", t_close)[:2])
     cdp.touch("touchEnd", [])
+    time.sleep(1.0)   # 가짜 로봇 상태는 2 Hz — 닫기 직전 값이 반영된 뒤 비교
     xa = ((rs.get() or {}).get("arm_target") or {}).get("x")
-    time.sleep(0.6)
+    time.sleep(1.0)
     xb = ((rs.get() or {}).get("arm_target") or {}).get("x")
     check(ph, "→ 닫은 뒤 팔 목표가 더 움직이지 않음", xa is not None and abs((xb or 0) - xa) < 0.005, "%s → %s" % (xa, xb))
 
-    # 알림: 위쪽, 비상정지 칸과 겹치지 않음, 터치 통과
-    cdp.eval("toast('알림 위치 시험: 이 글은 조작부를 막지 않습니다', 'info'); 1")
-    tb, sb = cdp.rect("#toast"), cdp.rect("#stop")
-    pe = cdp.eval("getComputedStyle(document.querySelector('#toast')).pointerEvents")
-    check(ph, "알림: 상태 줄 바로 아래, 비상정지 칸과 겹치지 않음, 터치 통과", tb["y"] < 80 and tb["r"] <= sb["x"] and pe == "none",
-          "알림 %.0f..%.0f, 비상정지 칸 x %.0f, pointer-events %s" % (tb["x"], tb["r"], sb["x"], pe))
-    cdp.eval("document.querySelector('#toast').className = ''; 1")
+    # 알림: 카메라 칸 안, 3 s 뒤 사라짐
+    cdp.eval("toast('알림 시험: 3 초 뒤 사라집니다', 'info'); 1")
+    t_t = time.monotonic()
+    check_toast(ph, cdp, "가로 기본")
+    time.sleep(2.5)
+    still = cdp.eval("document.querySelector('#toast').classList.contains('show')")
+    gone = wait_for(lambda: not cdp.eval("document.querySelector('#toast').classList.contains('show')"), 1.5)
+    check(ph, "알림은 약 3 s 뒤 사라짐", still and bool(gone), "%.1f s" % (time.monotonic() - t_t))
 
     # 메뉴: 비상정지 칸을 가리지 않는 자리에 열림
     tap(cdp, "#bMenu")
@@ -725,6 +763,11 @@ def phase_ui(out, chrome, rs):
     check(ph, "메뉴 열림: 메뉴 상자가 비상정지 칸과 겹치지 않고 비상정지가 맨 위", L["sheetBox"] and not overlap(L["sheetBox"], L["stop"]) and L["estopOnTop"],
           {"box": L["sheetBox"], "stop": L["stop"]})
     shot("shot_landscape_2400x1080_extra_menu.png")
+    cdp.eval("toast('메뉴 열린 동안의 알림 시험', 'info'); 1")
+    check_toast(ph, cdp, "메뉴 열림", expect_parent="sheetToastSlot")
+    vis = cdp.eval("(() => { const t = document.querySelector('#toast').getBoundingClientRect(), b = document.querySelector('#sheet .box').getBoundingClientRect();"
+                   " return t.top >= b.top - 0.5 && t.bottom <= b.bottom + 0.5 && t.left >= b.left - 0.5 && t.right <= b.right + 0.5; })()")
+    check(ph, "메뉴 열림: 알림이 메뉴 상자 안 위쪽에 보임", vis)
     tap(cdp, "#mClose")
     wait_for(lambda: not cdp.eval("document.querySelector('#sheet').classList.contains('open')"), 2)
 
@@ -779,6 +822,9 @@ def phase_ui(out, chrome, rs):
     check(ph, "→ 가짜 로봇 비상정지 latch", bool(latched))
     shown = wait_for(lambda: cdp.eval("!document.querySelector('#cEstop').hidden && document.body.classList.contains('estopped')"), 2)
     check(ph, "화면: '비상정지 ON' 표시·버튼 강조", bool(shown))
+    L = cdp.eval(LAYOUT_JS)
+    check(ph, "가로 비상정지: 칩(비상정지 ON 포함) 잘리지 않음, 비상정지 칩이 맨 앞", not L["chipsCut"] and L["chipsShown"][:1] == ["비상정지 ON"],
+          {"잘림": L["chipsCut"], "칩": L["chipsShown"], "상태 줄": L["barH"]})
     shot("shot_landscape_2400x1080_3_estop.png")
     # 비상정지 중 이동은 로봇이 막음(차체 0 유지)
     cdp.touch("touchStart", [(0, (j["cx"], j["cy"] - j["h"] * 0.3))])
@@ -845,7 +891,13 @@ def phase_ui(out, chrome, rs):
     if not cdp.eval("!document.body.classList.contains('armoff')"):
         tap(cdp, "#bArm")
         wait_for(lambda: cdp.eval("!document.body.classList.contains('armoff')"), 3)
-    shot("shot_portrait_1080x2400_2_arm_panel.png")
+    f = cdp.rect('.hb[data-ax="x"][data-d="1"]')
+    cdp.touch("touchStart", [(2, (f["cx"], f["cy"]))])
+    rej = wait_for(lambda: "팔 목표 거부" in (cdp.eval("document.querySelector('#toast').classList.contains('show') && document.querySelector('#toast').textContent") or ""), 4)
+    check(ph, "세로: '앞'을 계속 누름 → '팔 목표 거부' 알림", bool(rej))
+    check_toast(ph, cdp, "세로 팔 패널")
+    shot("shot_portrait_1080x2400_2_arm_panel_with_notice.png", keep_toast=True)
+    cdp.touch("touchEnd", [])
     tap(cdp, "#bMenu")
     wait_for(lambda: cdp.eval("document.querySelector('#sheet').classList.contains('open')"), 2)
     L = cdp.eval(LAYOUT_JS)
@@ -859,6 +911,9 @@ def phase_ui(out, chrome, rs):
     latched = wait_for(lambda: (rs.get() or {}).get("emergency_stop") is True, 2)
     wait_for(lambda: cdp.eval("!document.querySelector('#cEstop').hidden"), 2)
     check(ph, "세로: 비상정지 → estop 송신·가짜 로봇 latch", bool(latched) and bool([b for _, b in tr.bodies("/api/cmd", t_es) if b.get("cmd") == "estop"]))
+    L = cdp.eval(LAYOUT_JS)
+    check(ph, "세로 비상정지: 칩 잘리지 않음, 비상정지 칩이 맨 앞", not L["chipsCut"] and L["chipsShown"][:1] == ["비상정지 ON"],
+          {"잘림": L["chipsCut"], "칩": L["chipsShown"], "상태 줄": L["barH"]})
     shot("shot_portrait_1080x2400_3_estop.png")
     tap(cdp, "#bClear", hold=1.0)
     check(ph, "세로: 길게 눌러 해제", bool(wait_for(lambda: (rs.get() or {}).get("emergency_stop") is False, 3)))
@@ -914,7 +969,7 @@ def main():
     ap.add_argument("--keep", action="store_true", help="끝나도 컨테이너를 남김(디버그)")
     ap.add_argument("--chrome-port", type=int, default=19333)
     args = ap.parse_args()
-    out = args.out or os.path.join(ROOT, "work", "logs", "app_ui_v1_1_" + time.strftime("%Y%m%d_%H%M%S"))
+    out = args.out or os.path.join(ROOT, "work", "logs", "app_ui_v1_2_" + time.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(out, exist_ok=True)
     for p in (WEB_PORT, CAM_PORT, RB_PORT, args.chrome_port, args.chrome_port + 1):
         if not port_free(p):

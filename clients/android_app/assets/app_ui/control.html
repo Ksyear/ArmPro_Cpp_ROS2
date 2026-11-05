@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0d1014">
 <title>ArmPi 조종</title>
 <!--
-  ArmPi 조종기 Android 앱 안의 조종 화면(앱 1.1, 2026-11-05).
+  ArmPi 조종기 Android 앱 안의 조종 화면(앱 1.2, 2026-11-05).
 
   불러오는 방식: 앱이 http://<로봇 IP>:18765/app-ui/control.html?video=<영상 주소> 를 열면
   앱(WebView)이 이 파일을 assets 에서 꺼내 준다. 그래서 화면의 출처가 로봇 웹 조종기와 같고,
@@ -15,8 +15,10 @@
 
   화면 구성
     가로: [이동 | 카메라 | 비상정지]      세로: 카메라 / 비상정지 / 이동
-  - 상태 줄: 연결·비상정지·조종권·배터리·ACK·차체·팔 + 영상 켜기/끄기·메뉴
-  - 카메라 칸: 4:3 비율 유지(남는 곳은 검은 띠). 가로 화면에서 누르면 이동 칸 자리까지 크게, 다시 누르면 원래대로
+  - 상태 줄: 비상정지 > 연결 > 조종권 > 배터리 > ACK > 차체·팔(한 칩) > 로봇 상태 미수신(문제일 때만) + 메뉴.
+    칩이 넘치면 잘리지 않고 다음 줄로 넘어간다.
+  - 카메라 칸: 4:3 비율 유지(남는 곳은 검은 띠), 영상 켜기/끄기 버튼. 가로 화면에서 "크게"를 누르면 이동 칸 자리까지
+    크게, 다시 누르면 원래대로. 알림(3 s)과 안내 문구는 카메라 칸 아래쪽 안에 뜬다(조작 버튼을 가리지 않음).
   - 비상정지 칸: 위치 고정. 팔 조종 패널·메뉴·카메라 크게 보기 중에도 가려지지 않는다
   - 이동 칸: 조이스틱(앞뒤·옆) + 회전 + 속도 + "팔 조종" 열기
   - 팔 조종 패널: 이동 칸 자리에 열림. 열거나 닫을 때 누르던 입력은 모두 중립
@@ -40,7 +42,7 @@
   [hidden] { display:none !important; }
 
   /* ── 전체 틀(#app 은 쌓임 맥락을 만들지 않게 position:relative 만) ── */
-  #app { position:relative; height:100%; display:grid; grid-template-rows:calc(var(--barh) + var(--st)) minmax(0,1fr); }
+  #app { position:relative; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr); }
   #main { min-height:0; display:grid; gap:var(--gap);
     padding:var(--gap) calc(var(--gap) + var(--sr)) calc(var(--gap) + var(--sb)) calc(var(--gap) + var(--sl));
     grid-template-columns:minmax(0,1fr) minmax(0,1fr) var(--stopw); grid-template-rows:minmax(0,1fr);
@@ -51,11 +53,11 @@
   .panel { position:relative; min-width:0; min-height:0; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
 
   /* ── 상태 줄 ── */
-  #bar { display:flex; align-items:center; gap:6px; min-width:0; padding:calc(4px + var(--st)) calc(8px + var(--sr)) 4px calc(8px + var(--sl));
-    border-bottom:1px solid var(--line); background:var(--bar); }
-  #chips { flex:1; min-width:0; display:flex; gap:5px; overflow-x:auto; scrollbar-width:none; }
-  #chips::-webkit-scrollbar { display:none; }
-  .chip { flex:none; padding:4px 9px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--dim);
+  #bar { display:flex; align-items:center; gap:6px; min-width:0; min-height:calc(var(--barh) + var(--st));
+    padding:calc(4px + var(--st)) calc(8px + var(--sr)) 4px calc(8px + var(--sl)); border-bottom:1px solid var(--line); background:var(--bar); }
+  /* 칩은 잘리지 않게 줄바꿈(가로 화면은 보통 한 줄, 세로는 두 줄) */
+  #chips { flex:1; min-width:0; display:flex; flex-wrap:wrap; align-content:center; gap:4px 5px; }
+  .chip { flex:none; max-width:100%; padding:3px 8px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--dim);
     font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .chip.ok { color:var(--ok); border-color:rgba(62,207,142,.65); }
   .chip.warn { color:var(--warn); border-color:rgba(245,176,65,.7); }
@@ -76,11 +78,18 @@
     color:var(--dim); font-size:13px; text-align:center; pointer-events:none; }
   .camtag { position:absolute; left:8px; top:8px; padding:3px 8px; border-radius:999px; font-size:11px; color:var(--dim);
     background:rgba(0,0,0,.55); pointer-events:none; }
-  #bCamBig { position:absolute; right:6px; top:6px; height:var(--touch); min-width:var(--touch); padding:0 10px; border-radius:10px;
-    background:rgba(0,0,0,.55); border:1px solid var(--line); font-size:12px; }
+  .cambtns { position:absolute; right:6px; top:6px; display:flex; gap:6px; }
+  .cambtns button { height:var(--touch); min-width:var(--touch); padding:0 10px; border-radius:10px;
+    background:rgba(0,0,0,.6); border:1px solid var(--line); font-size:12px; }
   @media (orientation:portrait) { #bCamBig { display:none; } }
   .camfoot { position:absolute; left:8px; right:8px; bottom:8px; display:flex; flex-direction:column; align-items:center; gap:6px;
     pointer-events:none; }
+  /* 알림: 카메라 칸 아래쪽 안(메뉴가 열려 있으면 메뉴 위쪽). 3 s 뒤 사라지고 터치는 통과 */
+  #toast { display:none; max-width:100%; pointer-events:none; padding:7px 10px; border-radius:8px; font-size:12px; line-height:1.35;
+    text-align:center; color:#fff; background:rgba(165,22,22,.94); border:1px solid var(--bad); }
+  #toast.show { display:block; } #toast.info { background:rgba(18,44,78,.94); border-color:var(--accent); }
+  .toastslot { position:sticky; top:0; z-index:1; display:flex; justify-content:center; }
+  .toastslot:empty { display:none; }
   .msg { max-width:100%; padding:6px 10px; border-radius:8px; font-size:12px; text-align:center; background:rgba(16,21,27,.86);
     border:1px solid var(--line); }
   .msg:empty { display:none; }
@@ -160,15 +169,7 @@
   .read { min-height:14px; font-size:11px; color:var(--dim); text-align:center; font-variant-numeric:tabular-nums;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-  /* ── 알림·메뉴(메뉴 상자는 비상정지 칸을 피한 자리에 연다) ── */
-  /* 알림은 위쪽(상태 줄 아래)에, 비상정지 칸을 가리지 않게, 터치는 통과(조작부를 막지 않음) */
-  #toast { position:fixed; z-index:60; top:calc(var(--barh) + var(--st) + 8px); left:50%; transform:translateX(-50%);
-    max-width:min(86vw, 520px); pointer-events:none; padding:8px 12px; border-radius:8px; font-size:13px; text-align:center;
-    display:none; color:#fff; background:rgba(165,22,22,.95); border:1px solid var(--bad); }
-  @media (orientation:landscape) {
-    #toast { left:calc((100vw - var(--stopw) - 16px) / 2); max-width:min(calc(100vw - var(--stopw) - 48px), 560px); }
-  }
-  #toast.show { display:block; } #toast.info { background:rgba(18,44,78,.95); border-color:var(--accent); }
+  /* ── 메뉴(메뉴 상자는 비상정지 칸을 피한 자리에 연다) ── */
   #sheet { position:fixed; z-index:50; inset:0; background:rgba(0,0,0,.6); display:none; }
   #sheet.open { display:block; }
   #sheet .box { position:absolute; left:0; top:0; width:100%; height:100%; overflow-y:auto; touch-action:pan-y; background:#141920;
@@ -188,16 +189,14 @@
 <div id="app">
   <header id="bar">
     <div id="chips" aria-live="polite">
-      <span id="cLink" class="chip">연결 중…</span>
       <span id="cEstop" class="chip bad" hidden>비상정지 ON</span>
+      <span id="cLink" class="chip">연결 중…</span>
       <span id="cCtl" class="chip">조종권 -</span>
       <span id="cBat" class="chip">배터리 -</span>
       <span id="cAck" class="chip">ACK -</span>
-      <span id="cBase" class="chip">차체 -</span>
-      <span id="cArm" class="chip">팔 -</span>
-      <span id="cRb" class="chip warn" hidden>rosbridge 미연결</span>
+      <span id="cChan" class="chip" hidden>차체·팔 -</span>
+      <span id="cRb" class="chip warn" hidden>로봇 상태 미수신</span>
     </div>
-    <button id="bVideo" class="ib" aria-label="영상 켜기·끄기">영상 끄기</button>
     <button id="bFull" class="ib" aria-label="전체 화면">전체</button>
     <button id="bMenu" class="ib" aria-label="메뉴 열기" aria-haspopup="dialog">메뉴</button>
   </header>
@@ -207,8 +206,12 @@
       <img id="video" alt="로봇 카메라 영상">
       <div id="novideo">영상 없음</div>
       <span class="camtag">카메라</span>
-      <button id="bCamBig" aria-label="카메라 크게 보기" aria-pressed="false">⤢ 크게</button>
-      <div class="camfoot">
+      <div class="cambtns">
+        <button id="bVideo" aria-label="영상 켜기·끄기">영상 끄기</button>
+        <button id="bCamBig" aria-label="카메라 크게 보기" aria-pressed="false">⤢ 크게</button>
+      </div>
+      <div class="camfoot" id="camfoot">
+        <div id="toast" role="status" aria-live="assertive"></div>
         <div id="msg" class="msg" role="status"></div>
         <div id="owner"><div id="ownerText">다른 기기가 조종 중</div><button id="bTake">조종권 가져오기</button></div>
       </div>
@@ -263,6 +266,7 @@
 
 <div id="sheet" role="dialog" aria-label="메뉴">
   <div class="box">
+    <div class="toastslot" id="sheetToastSlot"></div>
     <div class="grid">
       <button id="mClose">닫기</button>
     </div>
@@ -287,11 +291,10 @@
     <pre id="events"></pre>
   </div>
 </div>
-<div id="toast" role="status"></div>
 
 <script>
 "use strict";
-const UI_VERSION = '앱 화면 1.1';
+const UI_VERSION = '앱 화면 1.2';
 const $ = id => document.getElementById(id);
 const UA = navigator.userAgent;
 const IN_APP = /ArmPiController-Android/.test(UA);
@@ -493,7 +496,7 @@ onTap($('bHome'), () => {
   // 팔 조종 중: 목표를 기본 자세로(로봇이 속도 제한으로 보간). 꺼져 있으면 rosbridge home 서비스.
   if (armEnabled) cmd('arm_home_target');
   else if (st && st.rosbridge && st.rosbridge.connected) cmd('arm_home');
-  else toast('rosbridge 미연결 — "팔 조종 켜기" 뒤 다시 누르면 목표를 기본 자세로 옮깁니다', 'info');
+  else toast('로봇 상태 미수신 — "팔 조종 켜기" 뒤 다시 누르면 목표를 기본 자세로 옮깁니다', 'info');
 });
 
 // ── 속도 ──
@@ -550,8 +553,8 @@ const Panels = {
 onTap($('bArmPanel'), () => Panels.arm(true));
 onTap($('bArmClose'), () => Panels.arm(false));
 onTap($('bCamBig'), () => Panels.cam(!ui.camBig));
-$('cam').addEventListener('click', e => {   // 영상 자체를 눌러도 크게/원래대로
-  if (!$('owner').contains(e.target) && !$('bCamBig').contains(e.target)) Panels.cam(!ui.camBig);
+$('cam').addEventListener('click', e => {   // 영상 자체를 눌러도 크게/원래대로(카메라 칸 안의 버튼·안내 상자는 제외)
+  if (!e.target.closest('button, #owner')) Panels.cam(!ui.camBig);
 });
 onTap($('bMenu'), () => Panels.sheet(true));
 $('mClose').addEventListener('click', () => Panels.sheet(false));
@@ -670,12 +673,14 @@ $('bFull').addEventListener('click', async () => {
   } catch (e) { toast('전체 화면을 열 수 없습니다', 'info'); }
 });
 
-// ── 알림 ──
+// ── 알림(3 s): 카메라 칸 아래쪽 안, 메뉴가 열려 있으면 메뉴 위쪽 ──
 let toastTimer = null;
 function toast(text, kind) {
   const t = $('toast');
+  const slot = ui.sheetOpen ? $('sheetToastSlot') : $('camfoot');
+  if (t.parentElement !== slot) slot.prepend(t);
   t.textContent = text; t.className = 'show' + (kind === 'info' ? ' info' : '');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 4000);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 3000);
 }
 
 // ───────────────────────── 상태 표시(값이 빠진 이전 로봇도 기본값으로 동작) ─────────────────────────
@@ -692,11 +697,11 @@ const View = {
   chips(p, linked, es, rs) {
     const {u, base, arm, rb, ctl, ses} = p;
     // 조종권 없이 비상정지를 보내려고 잠깐 연 세션(estop_only)·닫히는 중(closing)은 "연결"로 보이지 않는다
-    if (!linked) chip('cLink', ses.reason === 'estop_only' && u.estop_pending ? '대기 · 비상정지 보냄' : '대기 · 조작하면 연결', '');
+    if (!linked) chip('cLink', ses.reason === 'estop_only' && u.estop_pending ? '대기 · 비상정지 보냄' : '연결 대기', '');
     else if (u.retired) chip('cLink', '연결 끊음', 'warn');
     else chip('cLink', u.connected ? '로봇 연결' : '로봇 응답 없음', u.connected ? 'ok' : 'bad');
     chip('cEstop', '비상정지 ON' + (u.estop_pending ? ' (ACK 대기)' : ''), 'bad', !es && !u.estop_pending);
-    chip('cCtl', ctl.you ? '조종권: 이 화면' : (ctl.owner ? '조종권: 다른 기기' : '조종권: 없음'), ctl.you ? 'ok' : (ctl.owner ? 'warn' : ''));
+    chip('cCtl', ctl.you ? '조종권 이 화면' : (ctl.owner ? '조종권 다른 기기' : '조종권 없음'), ctl.you ? 'ok' : (ctl.owner ? 'warn' : ''));
     const bat = rb.battery;
     let bt = '-', low = false;
     if (bat && typeof bat.voltage === 'number') {
@@ -706,9 +711,12 @@ const View = {
     chip('cBat', '배터리 ' + bt, low ? 'warn' : '');
     const ack = linked && u.connected && typeof u.ack_ms_last === 'number' ? Math.round(u.ack_ms_last) : null;
     chip('cAck', 'ACK ' + (ack == null ? '-' : ack + ' ms'), ack != null && ack > 150 ? 'warn' : '');
-    chip('cBase', '차체 ' + (linked ? ko(base.state) : '-'), linked ? stCls(base.state) : '');
-    chip('cArm', '팔 ' + (linked ? ko(arm.state) : '-'), linked ? stCls(arm.state) : '');
-    chip('cRb', 'rosbridge 미연결', 'warn', rb.connected || rb.enabled === false || s_rbUnknown(rb));
+    // 차체·팔 채널은 한 칩(연결됐을 때만). 둘이 같으면 "차체·팔 활성", 다르면 "차체 활성 · 팔 대기"
+    const cb = stCls(base.state), ca = stCls(arm.state), rank = c => ['', 'ok', 'warn', 'bad'].indexOf(c);
+    chip('cChan', base.state === arm.state ? '차체·팔 ' + ko(base.state) : '차체 ' + ko(base.state) + ' · 팔 ' + ko(arm.state),
+         rank(cb) >= rank(ca) ? cb : ca, !linked);
+    // 로봇 상태 토픽(/armpi/status)을 못 받을 때만(이전 이름 rosbridge 미연결)
+    chip('cRb', '로봇 상태 미수신', 'warn', rb.connected !== false || rb.enabled === false);
   },
   arm(p, es) {
     const b = $('bArm');
@@ -746,8 +754,6 @@ const View = {
     }
   },
 };
-// rosbridge 항목이 아예 없는 응답(이전 로봇)은 경고하지 않는다
-function s_rbUnknown(rb) { return rb.connected === undefined && rb.enabled === undefined; }
 function render(s) {
   if (!s || typeof s !== 'object') return;
   st = s;
@@ -778,7 +784,7 @@ function renderSheet(s) {
     ['ACK 지연', typeof u.ack_ms_last !== 'number' ? '-' : `${u.ack_ms_last} ms (중앙 ${ms(u.ack_ms_p50)}, 최대 ${ms(u.ack_ms_max)}, 허용 ${typeof u.ack_timeout_s === 'number' ? Math.round(u.ack_timeout_s * 1000) : '-'} ms)`],
     ['통신 끊김', `${ms(u.link_drops)}회 · 자동 재무장 차체 ${ms(base.auto_rearms)} / 팔 ${ms(arm.auto_rearms)}`],
     ['패킷', `송신 ${ms(u.packets_sent)}, ACK ${ms(u.acks)}, 늦은 ACK ${ms(u.late_acks)}`],
-    ['rosbridge', rb.enabled === false ? '사용 안 함' : (rb.connected ? '연결' : '미연결')],
+    ['로봇 상태', rb.enabled === false ? '사용 안 함' : (rb.connected ? '받는 중' : '미수신')],
     ['영상', document.body.dataset.videoUrl || '-'],
     ['이 화면', `${SCREEN_NAME} · ${UI_VERSION} · ${SCREEN.slice(0, 4)}`],
   ];
@@ -795,7 +801,7 @@ async function poll() {
     failCount = 0;
   } catch (e) {
     failCount++;
-    chip('cLink', '로봇 웹 조종기 응답 없음', 'bad');
+    chip('cLink', '웹 조종기 응답 없음', 'bad');
     if (failCount >= 3 && (joy.id !== null || turn.id !== null || holds.size)) releaseAll(false);
   } finally { clearTimeout(tm); }
   setTimeout(poll, document.hidden ? 1000 : 250);
@@ -809,7 +815,7 @@ async function poll() {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       cfg = await r.json();
       if (cfg && typeof cfg === 'object') break;
-    } catch (e) { chip('cLink', '로봇 웹 조종기 연결 중…', 'warn'); }
+    } catch (e) { chip('cLink', '웹 조종기 연결 중…', 'warn'); }
     await new Promise(r => setTimeout(r, 1000));
   }
   if (!speed) {   // 이 화면에 저장된 속도가 없으면 로봇 설정의 기본값(v2.3 로봇 0.6). 값이 없는 이전 로봇은 0.3
