@@ -8,6 +8,7 @@
 #       JDK 17 이상(JAVA_HOME, PATH, mise, /usr/libexec/java_home 순서로 찾음).
 # 서명: clients/android_app/debug.keystore(없으면 keytool 로 만듦, 비밀번호 android). 디버그 키라 배포용이 아니다.
 #       같은 키로 서명해야 휴대폰에서 '업데이트'로 설치된다(키가 바뀌면 먼저 지우고 설치).
+# 조종 화면: assets/app_ui/ 를 APK 의 assets 로 넣는다(앱이 http://<IP>:18765/app-ui/ 경로로 꺼내 준다).
 # 결과: output/ArmPi_Controller_android.apk
 set -euo pipefail
 
@@ -17,7 +18,7 @@ OUT_DIR="$ROOT/output"
 APK_OUT="$OUT_DIR/ArmPi_Controller_android.apk"
 BUILD="${BUILD_DIR:-${TMPDIR:-/tmp}/armpi_android_build}"
 MIN_SDK=26
-VERSION_NAME="1.0"
+VERSION_NAME="1.1"                     # 1.1: 앱 안 조종 화면(assets/app_ui), 가로·세로
 VERSION_CODE="$(date +%y%m%d%H)"      # 예: 26110222 (int 범위 안)
 KEYSTORE="${KEYSTORE:-$HERE/debug.keystore}"
 KS_PASS="${KS_PASS:-android}"
@@ -55,16 +56,17 @@ echo "   JDK: $("$JAVA_HOME/bin/javac" -version 2>&1)"
 echo "   빌드 폴더: $BUILD"
 
 rm -rf "$BUILD"
-mkdir -p "$BUILD/res" "$BUILD/gen" "$BUILD/classes" "$BUILD/dex" "$OUT_DIR"
+mkdir -p "$BUILD/res" "$BUILD/assets" "$BUILD/gen" "$BUILD/classes" "$BUILD/dex" "$OUT_DIR"
 
 # ── 1) 리소스: 소스 res + 아이콘(mipmap) 생성 → aapt2 compile/link ──
 cp -R "$HERE/res/." "$BUILD/res/"
-find "$BUILD/res" -name '._*' -delete 2>/dev/null || true   # exFAT 의 AppleDouble 파일 제거
+cp -R "$HERE/assets/." "$BUILD/assets/"
+find "$BUILD/res" "$BUILD/assets" \( -name '._*' -o -name '.DS_Store' \) -delete 2>/dev/null || true   # exFAT 의 AppleDouble 파일 제거
 /usr/bin/python3 -B "$ROOT/clients/mac_controller/make_icon.py" --android "$BUILD/res" > /dev/null
 "$BT/aapt2" compile --dir "$BUILD/res" -o "$BUILD/res.zip"
 "$BT/aapt2" link -o "$BUILD/base.apk" -I "$ANDROID_JAR" --manifest "$HERE/AndroidManifest.xml" \
   --java "$BUILD/gen" --min-sdk-version "$MIN_SDK" --target-sdk-version "$TARGET_SDK" \
-  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" --auto-add-overlay "$BUILD/res.zip"
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" -A "$BUILD/assets" --auto-add-overlay "$BUILD/res.zip"
 
 # ── 2) 자바 → 클래스 → DEX ──
 find "$HERE/src" "$BUILD/gen" -name '*.java' ! -name '._*' > "$BUILD/sources.txt"
@@ -92,6 +94,8 @@ echo "== apksigner verify"
 "$BT/apksigner" verify --verbose --print-certs "$APK_OUT" | grep -E "Verifie|Signer #1 certificate (DN|SHA-256)|Number of signers"
 echo "== aapt2 dump badging"
 "$BT/aapt2" dump badging "$APK_OUT" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^uses-permission|^application-label|^launchable-activity|^native-code|^densities" || true
+echo "== assets 확인"
+unzip -l "$APK_OUT" | grep -E "assets/" || { echo "assets 없음" >&2; exit 1; }
 echo "== zipalign 확인"
 "$BT/zipalign" -c -p 4 "$APK_OUT" && echo "정렬 OK"
 echo "== 결과: $APK_OUT ($(du -h "$APK_OUT" | cut -f1))"

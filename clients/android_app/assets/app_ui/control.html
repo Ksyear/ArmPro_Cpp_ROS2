@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1014">
+<title>ArmPi 조종</title>
+<!--
+  ArmPi 조종기 Android 앱 안의 조종 화면(앱 1.1, 2026-11-05).
+
+  불러오는 방식: 앱이 http://<로봇 IP>:18765/app-ui/control.html?video=<영상 주소> 를 열면
+  앱(WebView)이 이 파일을 assets 에서 꺼내 준다. 그래서 화면의 출처가 로봇 웹 조종기와 같고,
+  /api/config·/api/state·/api/input·/api/cmd 를 로봇에 그대로 보낸다(로봇 쪽 코드 변경 없음, v2.3 게이트웨이 API).
+  앱은 그 로봇 IP 의 18765(/app-ui/·/api/)와 8080(/stream) 밖으로 나가는 요청을 막는다.
+
+  화면 구성
+    가로: [이동 | 카메라 | 비상정지]      세로: 카메라 / 비상정지 / 이동
+  - 상태 줄: 연결·비상정지·조종권·배터리·ACK·차체·팔 + 영상 켜기/끄기·메뉴
+  - 카메라 칸: 4:3 비율 유지(남는 곳은 검은 띠). 가로 화면에서 누르면 이동 칸 자리까지 크게, 다시 누르면 원래대로
+  - 비상정지 칸: 위치 고정. 팔 조종 패널·메뉴·카메라 크게 보기 중에도 가려지지 않는다
+  - 이동 칸: 조이스틱(앞뒤·옆) + 회전 + 속도 + "팔 조종" 열기
+  - 팔 조종 패널: 이동 칸 자리에 열림. 열거나 닫을 때 누르던 입력은 모두 중립
+  안전 규칙(입력 0.3 s 끊기면 로봇 서버가 중립, 손 떼면·포커스 잃으면·화면 돌리면 중립, 조종권, 비상정지 우선)은
+  로봇의 휴대폰 화면(/mobile)과 같다.
+-->
+<style>
+  :root {
+    --bg:#0d1014; --bar:#10151b; --panel:#141a21; --panel2:#1f2730; --raised:#27313c; --line:rgba(255,255,255,.14);
+    --text:#eef2f7; --dim:#a8b2c0; --accent:#4ea1ff; --ok:#3ecf8e; --warn:#f5b041; --bad:#ff5050; --orange:#ffaa28;
+    --barh:52px; --gap:8px; --radius:12px; --touch:44px; --stopw:clamp(112px, 16vw, 156px);
+    --sl:env(safe-area-inset-left, 0px); --sr:env(safe-area-inset-right, 0px);
+    --st:env(safe-area-inset-top, 0px); --sb:env(safe-area-inset-bottom, 0px);
+    --font:-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", Roboto, sans-serif;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font:14px/1.3 var(--font);
+    touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; overscroll-behavior:none; }
+  button { font:inherit; color:inherit; cursor:pointer; touch-action:none; }
+  button:disabled { opacity:.4; }
+  [hidden] { display:none !important; }
+
+  /* ── 전체 틀(#app 은 쌓임 맥락을 만들지 않게 position:relative 만) ── */
+  #app { position:relative; height:100%; display:grid; grid-template-rows:calc(var(--barh) + var(--st)) minmax(0,1fr); }
+  #main { min-height:0; display:grid; gap:var(--gap);
+    padding:var(--gap) calc(var(--gap) + var(--sr)) calc(var(--gap) + var(--sb)) calc(var(--gap) + var(--sl));
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr) var(--stopw); grid-template-rows:minmax(0,1fr);
+    grid-template-areas:"move cam stop"; }
+  @media (orientation:portrait) {
+    #main { grid-template-columns:minmax(0,1fr); grid-template-rows:auto auto minmax(0,1fr); grid-template-areas:"cam" "stop" "move"; }
+  }
+  .panel { position:relative; min-width:0; min-height:0; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
+
+  /* ── 상태 줄 ── */
+  #bar { display:flex; align-items:center; gap:6px; min-width:0; padding:calc(4px + var(--st)) calc(8px + var(--sr)) 4px calc(8px + var(--sl));
+    border-bottom:1px solid var(--line); background:var(--bar); }
+  #chips { flex:1; min-width:0; display:flex; gap:5px; overflow-x:auto; scrollbar-width:none; }
+  #chips::-webkit-scrollbar { display:none; }
+  .chip { flex:none; padding:4px 9px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--dim);
+    font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .chip.ok { color:var(--ok); border-color:rgba(62,207,142,.65); }
+  .chip.warn { color:var(--warn); border-color:rgba(245,176,65,.7); }
+  .chip.bad { color:#fff; background:rgba(190,25,25,.92); border-color:var(--bad); font-weight:700; }
+  .ib { flex:none; height:var(--touch); min-width:var(--touch); padding:0 10px; border-radius:10px; background:var(--panel2);
+    border:1px solid var(--line); font-size:12px; }
+
+  /* ── 카메라 칸: 4:3 유지(레터박스) ── */
+  #cam { grid-area:cam; overflow:hidden; background:#000; display:flex; align-items:center; justify-content:center; }
+  @media (orientation:portrait) { #cam { width:100%; aspect-ratio:4/3; max-height:40vh; justify-self:center; } }
+  @media (orientation:landscape) {
+    body.cam-big #cam { grid-area:1 / 1 / 2 / 3; }   /* 이동 칸 자리까지 넓힌다. 비상정지 칸은 그대로 */
+    body.cam-big #move, body.cam-big #arm { display:none; }
+  }
+  #video { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
+  body.v-off #video { display:none; }
+  #novideo { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:12px;
+    color:var(--dim); font-size:13px; text-align:center; pointer-events:none; }
+  .camtag { position:absolute; left:8px; top:8px; padding:3px 8px; border-radius:999px; font-size:11px; color:var(--dim);
+    background:rgba(0,0,0,.55); pointer-events:none; }
+  #bCamBig { position:absolute; right:6px; top:6px; height:var(--touch); min-width:var(--touch); padding:0 10px; border-radius:10px;
+    background:rgba(0,0,0,.55); border:1px solid var(--line); font-size:12px; }
+  @media (orientation:portrait) { #bCamBig { display:none; } }
+  .camfoot { position:absolute; left:8px; right:8px; bottom:8px; display:flex; flex-direction:column; align-items:center; gap:6px;
+    pointer-events:none; }
+  .msg { max-width:100%; padding:6px 10px; border-radius:8px; font-size:12px; text-align:center; background:rgba(16,21,27,.86);
+    border:1px solid var(--line); }
+  .msg:empty { display:none; }
+  #owner { display:none; pointer-events:auto; max-width:100%; padding:8px; border-radius:10px; text-align:center; font-size:12px;
+    background:rgba(110,62,0,.94); border:1px solid var(--warn); }
+  body.locked #owner { display:block; }
+  #owner button { margin-top:6px; width:100%; min-height:var(--touch); padding:4px 8px; border-radius:8px; background:#2a2f37;
+    border:1px solid var(--warn); font-size:13px; }
+
+  /* ── 비상정지 칸(늘 보임, 위치 고정, 메뉴보다 위) ── */
+  #stop { grid-area:stop; z-index:55; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    padding:10px 8px; }
+  @media (orientation:portrait) { #stop { flex-direction:row-reverse; justify-content:space-between; padding:8px 12px; } }
+  .estop { --d:clamp(88px, min(36vh, calc(var(--stopw) - 16px)), 140px); width:var(--d); height:var(--d); flex:none; border-radius:50%;
+    color:#fff; font-weight:800; font-size:clamp(16px, calc(var(--d) * .18), 24px); line-height:1.15; border:4px solid #ffd4d4;
+    background:radial-gradient(circle at 50% 38%, #ff5a5a, #c80000 68%, #8c0000); box-shadow:0 4px 18px rgba(255,0,0,.45); }
+  @media (orientation:portrait) { .estop { --d:clamp(88px, 26vw, 116px); } }
+  .estop.hit { transform:scale(.95); filter:brightness(1.25); }
+  body.estopped .estop { box-shadow:0 0 0 6px rgba(255,80,80,.35), 0 0 32px rgba(255,0,0,.85); }
+  .clear { position:relative; overflow:hidden; width:100%; min-height:var(--touch); flex:none; border-radius:10px;
+    background:var(--panel2); border:1px solid var(--line); font-size:13px; padding:4px 6px; }
+  @media (orientation:portrait) { .clear { flex:1; width:auto; min-height:52px; } }
+  .clear .fill { position:absolute; left:0; top:0; bottom:0; width:0; background:rgba(62,207,142,.5); }
+  .clear .txt { position:relative; }
+
+  /* ── 이동 칸: 조이스틱 + 회전 + 속도 + 팔 조종 열기 ── */
+  #move { grid-area:move; display:grid; gap:var(--gap); padding:var(--gap);
+    grid-template-columns:minmax(0,1fr) clamp(88px, 11vw, 112px); grid-template-rows:minmax(0,1fr) auto;
+    grid-template-areas:"joy side" "turn side"; }
+  @media (orientation:portrait) { #move { grid-template-columns:minmax(0,1fr) 104px; } }
+  body.arm-open #move { visibility:hidden; }
+  body.locked #move, body.locked #arm .ctl, body.locked #arm .armhead > button:not(#bArmClose) { opacity:.35; }
+  .joywrap { grid-area:joy; min-width:0; min-height:0; display:flex; align-items:center; justify-content:center; container-type:size; }
+  .joy { --s:min(100cqw, 100cqh, 240px); width:var(--s); height:var(--s); flex:none; position:relative; border-radius:50%;
+    background:radial-gradient(circle, rgba(255,255,255,.11), rgba(255,255,255,.04) 62%, rgba(255,255,255,.09));
+    border:2px solid rgba(255,255,255,.3); }
+  .joy::before, .joy::after { content:""; position:absolute; background:rgba(255,255,255,.14); }
+  .joy::before { left:50%; top:8%; bottom:8%; width:1px; } .joy::after { top:50%; left:8%; right:8%; height:1px; }
+  .knob { position:absolute; left:31%; top:31%; width:38%; height:38%; border-radius:50%; z-index:1;
+    background:rgba(78,161,255,.8); border:2px solid #d4e8ff; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+  .joy.on .knob, .turn.on .tknob { background:var(--accent); }
+  .lbl { position:absolute; font-size:11px; color:var(--dim); pointer-events:none; }
+  .lbl.t { top:5%; left:50%; transform:translateX(-50%); } .lbl.b { bottom:5%; left:50%; transform:translateX(-50%); }
+  .lbl.l { left:5%; top:50%; transform:translateY(-50%); } .lbl.r { right:5%; top:50%; transform:translateY(-50%); }
+  .turn { grid-area:turn; position:relative; height:56px; border-radius:999px; background:var(--panel2); border:2px solid rgba(255,255,255,.3); }
+  .tknob { position:absolute; top:50%; left:50%; width:48px; height:48px; margin:-24px 0 0 -24px; border-radius:50%;
+    background:rgba(78,161,255,.8); border:2px solid #d4e8ff; z-index:1; }
+  .turn .tl, .turn .tr { position:absolute; top:50%; transform:translateY(-50%); font-size:12px; color:var(--dim); pointer-events:none; }
+  .turn .tl { left:14px; } .turn .tr { right:14px; }
+  .side { grid-area:side; min-width:0; display:flex; flex-direction:column; justify-content:space-between; gap:var(--gap); }
+  .seg { display:flex; flex-direction:column; gap:4px; padding:5px; border-radius:10px; background:var(--panel2); border:1px solid var(--line); }
+  .seg span { font-size:11px; color:var(--dim); text-align:center; }
+  .seg button { min-height:var(--touch); border:0; border-radius:8px; background:transparent; font-size:13px; color:var(--dim); }
+  .seg button.on { background:var(--accent); color:#00142b; font-weight:700; }
+  .armopen { min-height:60px; padding:4px 6px; border-radius:10px; background:var(--raised); border:1px solid var(--orange);
+    color:var(--orange); font-weight:700; font-size:14px; line-height:1.25; }
+  .armopen small { display:block; font-weight:400; font-size:11px; color:var(--dim); }
+  .armopen.on small { color:var(--ok); }
+
+  /* ── 팔 조종 패널(이동 칸 자리에 열림) ── */
+  #arm { grid-area:move; z-index:20; display:none; flex-direction:column; gap:6px; padding:var(--gap); border-color:var(--orange); }
+  body.arm-open #arm { display:flex; }
+  .armhead { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+  .armhead button { min-height:var(--touch); padding:2px 4px; border-radius:9px; background:var(--panel2); border:1px solid var(--line);
+    font-size:12px; line-height:1.15; }
+  #bArm.on { background:#13462e; border-color:var(--ok); color:var(--ok); font-weight:700; }
+  #bArmClose { border-color:var(--orange); color:var(--orange); font-weight:700; }
+  .ctl { flex:1; min-height:0; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); grid-auto-rows:minmax(var(--touch), 1fr); gap:6px; }
+  .hb { min-width:0; padding:0 2px; border-radius:9px; background:var(--panel2); border:1px solid var(--line); font-size:12px; line-height:1.1; }
+  .hb b { display:block; font-size:16px; }
+  .hb.on { background:var(--orange); color:#1d1200; border-color:#ffd896; }
+  .hb.grip { border-color:rgba(255,170,40,.55); }
+  .ctl .center { display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--dim); border:1px dashed var(--line);
+    border-radius:9px; }
+  .ctl .grip2 { grid-column:span 3; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  body.armoff .hb { opacity:.42; }
+  .read { min-height:14px; font-size:11px; color:var(--dim); text-align:center; font-variant-numeric:tabular-nums;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* ── 알림·메뉴(메뉴 상자는 비상정지 칸을 피한 자리에 연다) ── */
+  /* 알림은 위쪽(상태 줄 아래)에, 비상정지 칸을 가리지 않게, 터치는 통과(조작부를 막지 않음) */
+  #toast { position:fixed; z-index:60; top:calc(var(--barh) + var(--st) + 8px); left:50%; transform:translateX(-50%);
+    max-width:min(86vw, 520px); pointer-events:none; padding:8px 12px; border-radius:8px; font-size:13px; text-align:center;
+    display:none; color:#fff; background:rgba(165,22,22,.95); border:1px solid var(--bad); }
+  @media (orientation:landscape) {
+    #toast { left:calc((100vw - var(--stopw) - 16px) / 2); max-width:min(calc(100vw - var(--stopw) - 48px), 560px); }
+  }
+  #toast.show { display:block; } #toast.info { background:rgba(18,44,78,.95); border-color:var(--accent); }
+  #sheet { position:fixed; z-index:50; inset:0; background:rgba(0,0,0,.6); display:none; }
+  #sheet.open { display:block; }
+  #sheet .box { position:absolute; left:0; top:0; width:100%; height:100%; overflow-y:auto; touch-action:pan-y; background:#141920;
+    border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
+  .box h3 { margin:10px 0 6px; font-size:14px; color:var(--dim); }
+  .box .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .box button { min-height:var(--touch); padding:6px; border-radius:8px; background:var(--panel2); border:1px solid var(--line);
+    font-size:13px; color:var(--text); display:flex; align-items:center; justify-content:center; text-align:center; }
+  .box button.danger { background:#5a1d1d; border-color:var(--bad); }
+  .box dl { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; margin:0; font-size:12px; }
+  .box dt { color:var(--dim); } .box dd { margin:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  .box pre { margin:0; font:11px/1.4 ui-monospace, Menlo, monospace; color:var(--dim); white-space:pre-wrap; }
+  .box .hint { margin:6px 0; font-size:12px; color:var(--dim); }
+</style>
+</head>
+<body class="armoff">
+<div id="app">
+  <header id="bar">
+    <div id="chips" aria-live="polite">
+      <span id="cLink" class="chip">연결 중…</span>
+      <span id="cEstop" class="chip bad" hidden>비상정지 ON</span>
+      <span id="cCtl" class="chip">조종권 -</span>
+      <span id="cBat" class="chip">배터리 -</span>
+      <span id="cAck" class="chip">ACK -</span>
+      <span id="cBase" class="chip">차체 -</span>
+      <span id="cArm" class="chip">팔 -</span>
+      <span id="cRb" class="chip warn" hidden>rosbridge 미연결</span>
+    </div>
+    <button id="bVideo" class="ib" aria-label="영상 켜기·끄기">영상 끄기</button>
+    <button id="bFull" class="ib" aria-label="전체 화면">전체</button>
+    <button id="bMenu" class="ib" aria-label="메뉴 열기" aria-haspopup="dialog">메뉴</button>
+  </header>
+
+  <main id="main">
+    <section id="cam" class="panel" aria-label="카메라">
+      <img id="video" alt="로봇 카메라 영상">
+      <div id="novideo">영상 없음</div>
+      <span class="camtag">카메라</span>
+      <button id="bCamBig" aria-label="카메라 크게 보기" aria-pressed="false">⤢ 크게</button>
+      <div class="camfoot">
+        <div id="msg" class="msg" role="status"></div>
+        <div id="owner"><div id="ownerText">다른 기기가 조종 중</div><button id="bTake">조종권 가져오기</button></div>
+      </div>
+    </section>
+
+    <section id="stop" class="panel" aria-label="비상정지">
+      <button id="bStop" class="estop" aria-label="비상정지">비상<br>정지</button>
+      <button id="bClear" class="clear" aria-label="비상정지 해제(0.8초 길게 누르기)"><span class="fill"></span><span class="txt">길게 눌러 해제</span></button>
+    </section>
+
+    <section id="move" class="panel" aria-label="차체 이동">
+      <div class="joywrap">
+        <div id="joy" class="joy" role="slider" aria-label="차체 이동 조이스틱(앞뒤·옆)">
+          <div id="knob" class="knob"></div>
+          <span class="lbl t">앞</span><span class="lbl b">뒤</span><span class="lbl l">왼쪽</span><span class="lbl r">오른쪽</span>
+        </div>
+      </div>
+      <div id="turn" class="turn" role="slider" aria-label="제자리 회전"><div id="tknob" class="tknob"></div>
+        <span class="tl">◀ 좌회전</span><span class="tr">우회전 ▶</span></div>
+      <div class="side">
+        <div class="seg" id="speed" role="group" aria-label="이동 속도"><span>속도</span>
+          <button data-v="0.3" aria-pressed="false">30%</button><button data-v="0.6" aria-pressed="false">60%</button><button data-v="1" aria-pressed="false">100%</button></div>
+        <button id="bArmPanel" class="armopen" aria-expanded="false" aria-controls="arm">팔 조종<small id="armState">꺼짐</small></button>
+      </div>
+    </section>
+
+    <section id="arm" class="panel" role="dialog" aria-label="팔 조종">
+      <div class="armhead">
+        <button id="bArm">팔 조종 켜기</button>
+        <button id="bHome">기본 자세</button>
+        <button id="bArmClose" aria-label="팔 조종 닫기">팔 조종<br>닫기 ✕</button>
+      </div>
+      <div class="ctl">
+        <button class="hb" data-ax="p" data-d="1" aria-label="손목 위"><b>↥</b>손목 위</button>
+        <button class="hb" data-ax="x" data-d="1" aria-label="앞"><b>▲</b>앞</button>
+        <button class="hb" data-ax="z" data-d="1" aria-label="위로"><b>⇡</b>위로</button>
+        <button class="hb" data-ax="y" data-d="1" aria-label="왼쪽"><b>◀</b>왼쪽</button>
+        <div class="center">손끝</div>
+        <button class="hb" data-ax="y" data-d="-1" aria-label="오른쪽"><b>▶</b>오른쪽</button>
+        <button class="hb" data-ax="p" data-d="-1" aria-label="손목 아래"><b>↧</b>손목 아래</button>
+        <button class="hb" data-ax="x" data-d="-1" aria-label="뒤"><b>▼</b>뒤</button>
+        <button class="hb" data-ax="z" data-d="-1" aria-label="아래로"><b>⇣</b>아래로</button>
+        <div class="grip2">
+          <button class="hb grip" data-ax="g" data-d="-1" aria-label="그리퍼 열기"><b>⟨ ⟩</b>그리퍼 열기</button>
+          <button class="hb grip" data-ax="g" data-d="1" aria-label="그리퍼 닫기"><b>⟩⟨</b>그리퍼 닫기</button>
+        </div>
+      </div>
+      <div id="armread" class="read"></div>
+    </section>
+  </main>
+</div>
+
+<div id="sheet" role="dialog" aria-label="메뉴">
+  <div class="box">
+    <div class="grid">
+      <button id="mClose">닫기</button>
+    </div>
+    <div class="hint">휴대폰의 뒤로 가기 = 연결을 끊고 앱 첫 화면으로.</div>
+    <h3>연결·조종권</h3>
+    <div class="grid">
+      <button id="mConnect">연결(새 세션)</button>
+      <button id="mDisconnect">연결 끊기</button>
+      <button id="mRelease">조종권 놓기</button>
+      <button id="mSync">팔 목표 = 로봇 현재값</button>
+    </div>
+    <h3>로봇 전체 (rosbridge 서비스)</h3>
+    <div class="grid">
+      <button id="mRobotStop" class="danger">로봇 전체 정지</button>
+      <button id="mRobotReset">전체 해제</button>
+    </div>
+    <div class="hint">빨간 비상정지 버튼은 Protocol v3 비상정지다. "로봇 전체 정지"는 rosbridge 서비스(/armpi/emergency_stop)라 따로 "전체 해제"해야 풀린다.
+      물리적 정지(전원 스위치)는 항상 손 닿는 곳에 둔다.</div>
+    <h3>상태</h3>
+    <dl id="detail"></dl>
+    <h3>최근 사건</h3>
+    <pre id="events"></pre>
+  </div>
+</div>
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+const UI_VERSION = '앱 화면 1.1';
+const $ = id => document.getElementById(id);
+const UA = navigator.userAgent;
+const IN_APP = /ArmPiController-Android/.test(UA);
+const SCREEN = (() => {   // 이 화면의 토큰(조종권 구분용). http 페이지에서도 쓸 수 있는 getRandomValues 사용
+  try { const a = new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); }
+  catch (e) { return (Date.now().toString(16) + Math.random().toString(16).slice(2)).replace(/[^0-9a-f]/g, '').slice(0, 24); }
+})();
+const SCREEN_NAME = IN_APP ? 'Android 앱' : '휴대폰 브라우저';
+const DEG = 180 / Math.PI;
+const KO = {awaiting_neutral:'중립 대기', idle:'대기', active:'활성', timeout:'시간 초과', emergency_stop:'비상정지', fault:'고장', no_ack:'응답 없음'};
+const ko = s => KO[s] || s || '-';
+const stCls = s => s === 'active' ? 'ok' : (!s || s === 'idle' ? '' : (s === 'emergency_stop' || s === 'fault' ? 'bad' : 'warn'));
+const f3 = v => (typeof v === 'number') ? v.toFixed(3) : '-';
+const deg = v => (typeof v === 'number') ? Math.round(v * DEG) : '-';
+const num = (v, d) => (typeof v === 'number' && isFinite(v)) ? v : d;
+const PORTRAIT = matchMedia('(orientation: portrait)');
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('armpi.' + k); return v == null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('armpi.' + k, v); } catch (e) { /* 저장 불가 */ } },
+};
+
+let cfg = null, st = null, armEnabled = false, winFocus = true;
+let inputN = 0, inflight = 0, failCount = 0, lastRejectSeq = null;
+let speed = [0.3, 0.6, 1].includes(Number(store.get('speed', ''))) ? Number(store.get('speed', '')) : 0;   // 0 = 저장값 없음
+const joy = {id:null, x:0, y:0, px:0, py:0};     // x 오른쪽 +, y 아래 + (화면 좌표, dead zone 적용)
+const turn = {id:null, v:0, px:0};               // 오른쪽 +
+const holds = new Map();                         // pointerId → {ax, d, el}  팔 버튼 누름
+const ui = {armOpen:false, sheetOpen:false, camBig:false};
+
+// ───────────────────────── 로봇 웹 조종기 API(v2.3 게이트웨이와 같은 형식) ─────────────────────────
+async function post(path, body, opts = {}) {
+  const ac = new AbortController(), tm = setTimeout(() => ac.abort(), opts.timeout || 2500);
+  try {
+    const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, cache:'no-store',
+      keepalive:!!opts.keepalive, signal:ac.signal,
+      body:JSON.stringify(Object.assign({screen:SCREEN, screen_name:SCREEN_NAME}, body))});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok && j.ok === undefined) j.ok = false;
+    return j;
+  } catch (e) { return {ok:false, error:'로봇 응답 없음'}; }
+  finally { clearTimeout(tm); }
+}
+async function cmd(c, extra = {}) {
+  const r = await post('/api/cmd', Object.assign({cmd:c}, extra));
+  if (!r.ok) toast(r.error || ('명령 실패: ' + c), 'bad');
+  return r;
+}
+
+// ───────────────────────── 입력(50 ms 마다, 바뀌면 즉시) ─────────────────────────
+function pageActive() { return !document.hidden && winFocus; }
+function armDirs() {
+  const a = {x:0, y:0, z:0, p:0, g:0};
+  for (const h of holds.values()) a[h.ax] = Math.max(-1, Math.min(1, a[h.ax] + h.d));
+  return a;
+}
+function currentInput() {
+  const active = pageActive();
+  const held = active && (joy.id !== null || turn.id !== null);
+  return {
+    f: held ? -joy.y * speed : 0, s: held ? -joy.x * speed : 0, t: held ? -turn.v * speed : 0,   // + 앞, + 왼쪽, + 좌회전
+    held, focused: active, arm: (active && armEnabled) ? armDirs() : {x:0, y:0, z:0, p:0, g:0},
+  };
+}
+function sendInput(force) {
+  if (!cfg) return;
+  if (!force && (document.hidden || inflight >= 2)) return;   // 느린 망에서 요청이 쌓이지 않게(끊기면 로봇 서버가 0.3 s 뒤 중립)
+  const body = currentInput();
+  body.n = ++inputN;                                          // 늦게 도착한 옛 입력은 서버가 버림
+  inflight++;
+  post('/api/input', body, {timeout:1500, keepalive:!!force}).finally(() => { inflight--; });
+}
+setInterval(() => sendInput(false), 50);
+
+function releaseAll(send = true) {
+  joy.id = null; joy.x = joy.y = joy.px = joy.py = 0;
+  turn.id = null; turn.v = turn.px = 0;
+  holds.clear();
+  paint();
+  if (send) sendInput(true);
+}
+// 앱이 조종 화면을 닫거나 백그라운드로 갈 때 부른다(leaving = 조종권도 놓기).
+window.armpiNeutral = function (leaving) {
+  releaseAll(true);
+  if (leaving) post('/api/cmd', {cmd:'release_control'}, {keepalive:true});
+};
+addEventListener('blur', () => { winFocus = false; releaseAll(); });
+addEventListener('focus', () => { winFocus = true; });
+addEventListener('pointerdown', () => { winFocus = true; }, true);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { releaseAll(); Video.stop(); } else { Video.load(); }
+});
+addEventListener('pagehide', () => { releaseAll(); post('/api/cmd', {cmd:'release_control'}, {keepalive:true}); });
+addEventListener('contextmenu', e => e.preventDefault());
+PORTRAIT.addEventListener('change', () => {   // 화면을 돌리면 중립, 크게 보기·메뉴 자리도 다시 잡는다
+  Panels.cam(false);
+  if (ui.sheetOpen) Panels.placeSheet();
+  releaseAll();
+});
+addEventListener('resize', () => { if (ui.sheetOpen) Panels.placeSheet(); });
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) doEstop(); } });
+
+// ───────────────────────── 그리기 ─────────────────────────
+const joyEl = $('joy'), knob = $('knob'), turnEl = $('turn'), tknob = $('tknob');
+function paint() {
+  knob.style.transform = `translate(${joy.px}px, ${joy.py}px)`;
+  joyEl.classList.toggle('on', joy.id !== null);
+  tknob.style.transform = `translateX(${turn.px}px)`;
+  turnEl.classList.toggle('on', turn.id !== null);
+  const on = new Set([...holds.values()].map(h => h.el));
+  document.querySelectorAll('.hb').forEach(el => el.classList.toggle('on', on.has(el)));
+}
+
+// 버튼 누름: 다른 손가락으로 조이스틱을 누른 채 눌러도 동작하게 pointerup 으로 처리한다
+// (두 번째 손가락의 탭은 click 이 생기지 않는다). 키보드·접근성 도구의 click(detail 0)도 받는다.
+// 탭 직후 브라우저가 만드는 click 은 버린다 — 패널이 바뀐 자리의 다른 버튼이 눌리지 않게.
+let tapGuardUntil = 0;
+document.addEventListener('click', e => {
+  if (e.detail !== 0 && Date.now() < tapGuardUntil) { e.stopPropagation(); e.preventDefault(); }
+}, true);
+function onTap(el, fn) {
+  let pid = null;
+  el.addEventListener('pointerdown', e => {
+    if (pid !== null) return;
+    pid = e.pointerId;
+    try { el.setPointerCapture(pid); } catch (err) { /* 이미 놓인 포인터 */ }
+  });
+  el.addEventListener('pointerup', e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    const r = el.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+      tapGuardUntil = Date.now() + 500;
+      fn(e);
+    }
+  });
+  el.addEventListener('pointercancel', e => { if (e.pointerId === pid) pid = null; });
+  el.addEventListener('click', e => { e.stopPropagation(); if (e.detail === 0) fn(e); });
+}
+
+// 누르는 동안만 값을 주는 조작부(손을 떼면 0). pointer capture 로 손가락이 밖으로 나가도 이어진다.
+function bindHold(el, {start, move, end}) {
+  el.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (start(e) === false) return;
+    el.setPointerCapture(e.pointerId);
+    sendInput(true);
+  });
+  if (move) el.addEventListener('pointermove', move);
+  const fin = e => { if (end(e)) { paint(); sendInput(true); } };
+  for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(t, fin);
+}
+
+// ── 조이스틱: 앞뒤(forward)·좌우 평행이동(strafe) ──
+function joyMove(e) {
+  const r = joyEl.getBoundingClientRect(), rad = r.width / 2, lim = rad - knob.offsetWidth * 0.25;
+  let dx = (e.clientX - (r.left + rad)) / lim, dy = (e.clientY - (r.top + rad)) / lim;
+  const m = Math.hypot(dx, dy);
+  if (m > 1) { dx /= m; dy /= m; }
+  const mm = Math.min(1, m), DZ = 0.12;
+  const sc = mm < DZ ? 0 : (mm - DZ) / (1 - DZ) / mm;
+  joy.x = dx * sc; joy.y = dy * sc; joy.px = dx * lim; joy.py = dy * lim;
+  paint();
+}
+bindHold(joyEl, {
+  start: e => { if (joy.id !== null) return false; joy.id = e.pointerId; joyMove(e); },
+  move: e => { if (e.pointerId === joy.id) joyMove(e); },
+  end: e => { if (e.pointerId !== joy.id) return false; joy.id = null; joy.x = joy.y = joy.px = joy.py = 0; return true; },
+});
+
+// ── 회전 슬라이더(손을 떼면 가운데로) ──
+function turnMove(e) {
+  const r = turnEl.getBoundingClientRect(), half = (r.width - tknob.offsetWidth) / 2;
+  let v = (e.clientX - (r.left + r.width / 2)) / half;
+  v = Math.max(-1, Math.min(1, v));
+  const DZ = 0.08;
+  turn.v = Math.abs(v) < DZ ? 0 : Math.sign(v) * (Math.abs(v) - DZ) / (1 - DZ);
+  turn.px = v * half;
+  paint();
+}
+bindHold(turnEl, {
+  start: e => { if (turn.id !== null) return false; turn.id = e.pointerId; turnMove(e); },
+  move: e => { if (e.pointerId === turn.id) turnMove(e); },
+  end: e => { if (e.pointerId !== turn.id) return false; turn.id = null; turn.v = turn.px = 0; return true; },
+});
+
+// ── 팔 버튼(누르는 동안 목표가 일정 속도로 이동) ──
+document.querySelectorAll('.hb').forEach(el => {
+  const ax = el.dataset.ax, d = Number(el.dataset.d);
+  bindHold(el, {
+    start: e => {
+      if (!armEnabled) { toast('먼저 "팔 조종 켜기"를 누르세요', 'info'); return false; }
+      holds.set(e.pointerId, {ax, d, el}); paint();
+    },
+    end: e => holds.delete(e.pointerId),
+  });
+});
+onTap($('bArm'), () => cmd('arm_enable', {on:!armEnabled}));
+onTap($('bHome'), () => {
+  // 팔 조종 중: 목표를 기본 자세로(로봇이 속도 제한으로 보간). 꺼져 있으면 rosbridge home 서비스.
+  if (armEnabled) cmd('arm_home_target');
+  else if (st && st.rosbridge && st.rosbridge.connected) cmd('arm_home');
+  else toast('rosbridge 미연결 — "팔 조종 켜기" 뒤 다시 누르면 목표를 기본 자세로 옮깁니다', 'info');
+});
+
+// ── 속도 ──
+function paintSpeed() {
+  document.querySelectorAll('#speed button').forEach(b => {
+    const on = Number(b.dataset.v) === speed;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+  });
+}
+document.querySelectorAll('#speed button').forEach(b => onTap(b, () => {
+  speed = Number(b.dataset.v); store.set('speed', String(speed)); paintSpeed();
+}));
+
+// ───────────────────────── 패널(팔 조종·카메라 크게·메뉴) ─────────────────────────
+// 패널을 열거나 닫으면 누르고 있던 입력은 모두 중립으로 돌린다. 비상정지 칸은 어느 패널도 가리지 않는다.
+const Panels = {
+  arm(on) {
+    on = !!on;
+    if (on) this.cam(false);
+    ui.armOpen = on;
+    document.body.classList.toggle('arm-open', on);
+    $('bArmPanel').setAttribute('aria-expanded', String(on));
+    releaseAll();
+  },
+  cam(on) {
+    on = !!on && !PORTRAIT.matches;   // 세로 화면은 폭이 좁아 크게 해도 그대로 → 가로로 돌리면 크게
+    if (on === ui.camBig) return;
+    if (on && ui.armOpen) this.arm(false);
+    ui.camBig = on;
+    document.body.classList.toggle('cam-big', on);
+    $('bCamBig').textContent = on ? '⤡ 원래대로' : '⤢ 크게';
+    $('bCamBig').setAttribute('aria-pressed', String(on));
+    releaseAll();
+  },
+  sheet(on) {
+    ui.sheetOpen = !!on;
+    $('sheet').classList.toggle('open', ui.sheetOpen);
+    if (ui.sheetOpen) { this.placeSheet(); releaseAll(); if (st) renderSheet(st); }
+  },
+  // 메뉴 상자는 비상정지 칸의 위·아래·왼쪽·오른쪽 중 가장 넓은 빈자리에 연다(비상정지는 메뉴 위로 늘 보인다).
+  placeSheet() {
+    const r = $('stop').getBoundingClientRect(), W = innerWidth, H = innerHeight, g = 6;
+    const spots = [
+      {l:0, t:0, w:r.left - g, h:H},
+      {l:r.right + g, t:0, w:W - r.right - g, h:H},
+      {l:0, t:0, w:W, h:r.top - g},
+      {l:0, t:r.bottom + g, w:W, h:H - r.bottom - g},
+    ];
+    const s = spots.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a));
+    const w = Math.min(s.w, 520), box = $('sheet').querySelector('.box');
+    Object.assign(box.style, {left:(s.l + Math.max(0, s.w - w)) + 'px', top:s.t + 'px', width:w + 'px', height:s.h + 'px'});
+  },
+};
+onTap($('bArmPanel'), () => Panels.arm(true));
+onTap($('bArmClose'), () => Panels.arm(false));
+onTap($('bCamBig'), () => Panels.cam(!ui.camBig));
+$('cam').addEventListener('click', e => {   // 영상 자체를 눌러도 크게/원래대로
+  if (!$('owner').contains(e.target) && !$('bCamBig').contains(e.target)) Panels.cam(!ui.camBig);
+});
+onTap($('bMenu'), () => Panels.sheet(true));
+$('mClose').addEventListener('click', () => Panels.sheet(false));
+$('sheet').addEventListener('click', e => { if (e.target === $('sheet')) Panels.sheet(false); });
+$('mConnect').addEventListener('click', () => cmd('connect'));
+$('mDisconnect').addEventListener('click', () => cmd('disconnect'));
+$('mRelease').addEventListener('click', () => cmd('release_control'));
+$('mSync').addEventListener('click', () => cmd('arm_sync'));
+$('mRobotStop').addEventListener('click', () => cmd('robot_estop'));
+$('mRobotReset').addEventListener('click', () => cmd('robot_reset'));
+
+// ───────────────────────── 비상정지·해제(늘 보이는 버튼) ─────────────────────────
+function doEstop() {
+  const b = $('bStop');
+  b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 220);
+  try { if (navigator.vibrate) navigator.vibrate(120); } catch (e) { /* 진동 없음 */ }
+  releaseAll(false);
+  cmd('estop');
+}
+$('bStop').addEventListener('pointerdown', e => { e.preventDefault(); doEstop(); });
+(() => {   // 해제는 0.8 s 길게 눌러야 한다(실수로 풀리지 않게)
+  const btn = $('bClear'), fill = btn.querySelector('.fill');
+  let timer = null, pid = null;
+  const reset = () => { fill.style.transition = 'none'; fill.style.width = '0'; };
+  btn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (pid !== null) return;
+    btn.setPointerCapture(e.pointerId); pid = e.pointerId;
+    reset(); void fill.offsetWidth;
+    fill.style.transition = 'width .8s linear'; fill.style.width = '100%';
+    timer = setTimeout(() => { timer = null; reset(); requestClear(); }, 800);
+  });
+  const end = e => { if (e.pointerId !== pid) return; pid = null; if (timer) { clearTimeout(timer); timer = null; } reset(); };
+  for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(t, end);
+})();
+
+// 해제: 세션이 없으면(비상정지만 보낸 상태 등) 먼저 연결하고, 로봇과 이어진 뒤 clear 를 보낸다.
+// (게이트웨이의 clear 는 조종권을 잡으며 세션을 여는데, 막 열린 세션에는 해제가 전달되지 않을 수 있다)
+function isLinked() {
+  const ses = (st && st.session) || {live:true};
+  return ses.live !== false && ses.reason !== 'estop_only' && ses.reason !== 'closing' && !!(st && st.udp && st.udp.connected);
+}
+async function requestClear() {
+  releaseAll();
+  if (!isLinked()) {
+    const c = await cmd('connect');
+    if (!c.ok) return;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 2500 && !isLinked()) await new Promise(r => setTimeout(r, 100));
+  }
+  const r = await cmd('clear');
+  if (r.ok) toast('해제 요청을 보냈습니다. 손을 모두 뗐다가 다시 조작하세요(팔은 다시 켜기)', 'info');
+}
+
+// ── 조종권 가져오기(두 번 눌러 확인) ──
+let takeArmed = 0;
+$('bTake').addEventListener('click', e => {
+  e.stopPropagation();
+  const b = $('bTake'), now = Date.now();
+  if (now - takeArmed < 3000) { takeArmed = 0; b.textContent = '조종권 가져오기'; cmd('take_control'); return; }
+  takeArmed = now; b.textContent = '한 번 더 누르면 가져옵니다';
+  setTimeout(() => { if (Date.now() - takeArmed >= 2900) b.textContent = '조종권 가져오기'; }, 3000);
+});
+
+// ───────────────────────── 영상(카메라 칸) ─────────────────────────
+// 앱이 로봇 IP 로 만든 주소(?video=)를 쓴다. 로봇 /api/config 의 video_url 은 로봇 안 주소(127.0.0.1)라 쓰지 않는다.
+// 원시 영상은 qos_profile=sensor_data(best-effort)로만 받는다(기본 RELIABLE 은 로봇 안 ROS 통신을 막을 수 있음).
+const VIDEO_PORT = 8080;
+const VIDEO_PATH = '/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data';
+function videoBase() {
+  const fallback = `http://${location.hostname}:${VIDEO_PORT}${VIDEO_PATH}`;
+  try {
+    const q = new URLSearchParams(location.search).get('video');
+    if (!q) return fallback;
+    const u = new URL(q);
+    // 이 화면을 연 로봇의 8080 /stream 만 받는다(다른 주소면 기본 주소)
+    if (u.protocol !== 'http:' || u.hostname !== location.hostname || Number(u.port) !== VIDEO_PORT || u.pathname !== '/stream') return fallback;
+    if (!u.searchParams.get('qos_profile')) u.searchParams.set('qos_profile', 'sensor_data');
+    return u.toString();
+  } catch (e) { return fallback; }
+}
+const Video = {
+  img: $('video'),
+  base: videoBase(),
+  mode: store.get('video', 'on') === 'off' ? 'off' : 'on',   // 예전 값(bg·pip)은 켬으로
+  load() {
+    if (this.mode === 'off' || document.hidden) return;
+    document.body.dataset.videoUrl = this.base;
+    this.img.src = this.base + '&t=' + Date.now();
+  },
+  stop() { this.img.removeAttribute('src'); },
+  set(m) {
+    this.mode = m === 'off' ? 'off' : 'on';
+    document.body.classList.toggle('v-off', this.mode === 'off');
+    store.set('video', this.mode);
+    $('bVideo').textContent = this.mode === 'off' ? '영상 켜기' : '영상 끄기';
+    if (this.mode === 'off') this.stop(); else if (!this.img.getAttribute('src')) this.load();
+    this.paintNote();
+  },
+  paintNote() {
+    const showing = this.mode === 'on' && this.img.naturalWidth > 0 && !!this.img.getAttribute('src');
+    $('novideo').hidden = showing;
+    $('novideo').textContent = this.mode === 'off' ? '영상 꺼짐 — 위의 "영상 켜기"' : '영상 없음 — 카메라 연결을 기다리는 중';
+  },
+};
+Video.img.onerror = () => { if (Video.img.getAttribute('src')) setTimeout(() => Video.load(), 3000); };
+setInterval(() => Video.paintNote(), 1000);
+onTap($('bVideo'), () => Video.set(Video.mode === 'off' ? 'on' : 'off'));
+
+// ── 전체 화면(브라우저에서만. 앱은 이미 전체 화면) ──
+$('bFull').hidden = IN_APP || !document.documentElement.requestFullscreen;
+$('bFull').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) { await document.exitFullscreen(); return; }
+    await document.documentElement.requestFullscreen({navigationUI:'hide'});
+  } catch (e) { toast('전체 화면을 열 수 없습니다', 'info'); }
+});
+
+// ── 알림 ──
+let toastTimer = null;
+function toast(text, kind) {
+  const t = $('toast');
+  t.textContent = text; t.className = 'show' + (kind === 'info' ? ' info' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 4000);
+}
+
+// ───────────────────────── 상태 표시(값이 빠진 이전 로봇도 기본값으로 동작) ─────────────────────────
+function chip(id, text, cls, hidden) { const el = $(id); el.textContent = text; el.className = 'chip ' + (cls || ''); el.hidden = !!hidden; }
+function parts(s) {
+  const u = s.udp || {};
+  return {
+    u, base: u.base || {}, arm: u.arm || {}, rb: s.rosbridge || {}, ctl: s.control || {},
+    // session 이 없는 로봇(항상 연결 방식)은 늘 연결된 것으로 본다
+    ses: s.session || {mode:'always', live:true, reason:'always'},
+  };
+}
+const View = {
+  chips(p, linked, es, rs) {
+    const {u, base, arm, rb, ctl, ses} = p;
+    // 조종권 없이 비상정지를 보내려고 잠깐 연 세션(estop_only)·닫히는 중(closing)은 "연결"로 보이지 않는다
+    if (!linked) chip('cLink', ses.reason === 'estop_only' && u.estop_pending ? '대기 · 비상정지 보냄' : '대기 · 조작하면 연결', '');
+    else if (u.retired) chip('cLink', '연결 끊음', 'warn');
+    else chip('cLink', u.connected ? '로봇 연결' : '로봇 응답 없음', u.connected ? 'ok' : 'bad');
+    chip('cEstop', '비상정지 ON' + (u.estop_pending ? ' (ACK 대기)' : ''), 'bad', !es && !u.estop_pending);
+    chip('cCtl', ctl.you ? '조종권: 이 화면' : (ctl.owner ? '조종권: 다른 기기' : '조종권: 없음'), ctl.you ? 'ok' : (ctl.owner ? 'warn' : ''));
+    const bat = rb.battery;
+    let bt = '-', low = false;
+    if (bat && typeof bat.voltage === 'number') {
+      bt = bat.voltage.toFixed(2) + ' V' + (typeof bat.percentage === 'number' ? ' ' + Math.round(bat.percentage * 100) + '%' : '');
+      low = typeof bat.percentage === 'number' && bat.percentage < 0.2;
+    } else if (rs && typeof rs.battery_v === 'number') bt = rs.battery_v.toFixed(2) + ' V';
+    chip('cBat', '배터리 ' + bt, low ? 'warn' : '');
+    const ack = linked && u.connected && typeof u.ack_ms_last === 'number' ? Math.round(u.ack_ms_last) : null;
+    chip('cAck', 'ACK ' + (ack == null ? '-' : ack + ' ms'), ack != null && ack > 150 ? 'warn' : '');
+    chip('cBase', '차체 ' + (linked ? ko(base.state) : '-'), linked ? stCls(base.state) : '');
+    chip('cArm', '팔 ' + (linked ? ko(arm.state) : '-'), linked ? stCls(arm.state) : '');
+    chip('cRb', 'rosbridge 미연결', 'warn', rb.connected || rb.enabled === false || s_rbUnknown(rb));
+  },
+  arm(p, es) {
+    const b = $('bArm');
+    b.textContent = armEnabled ? '팔 조종 끄기' : '팔 조종 켜기';
+    b.classList.toggle('on', armEnabled);
+    b.disabled = es;
+    $('armState').textContent = armEnabled ? '켜짐' : '꺼짐';
+    $('bArmPanel').classList.toggle('on', armEnabled);
+    if (!armEnabled && holds.size) { holds.clear(); paint(); }
+    const t = p.u.arm_target || {};
+    $('armread').textContent = `목표 x ${f3(t.x)} · y ${f3(t.y)} · z ${f3(t.z)} m · 손목 ${deg(t.pitch)}° · 그리퍼 ${typeof t.gripper === 'number' ? t.gripper.toFixed(2) : '-'}`;
+  },
+  message(p, linked, es, other) {
+    const {u, base, ctl} = p;
+    if (other) {
+      $('ownerText').textContent = `다른 기기가 조종 중: ${ctl.owner.name || '?'} (${ctl.owner.addr || '?'}). 이 화면의 조작은 무시됩니다(비상정지는 됨).`;
+      if (joy.id !== null || turn.id !== null || holds.size) releaseAll();
+    }
+    let m = '';
+    if (es) m = '비상정지 중 — "길게 눌러 해제" 뒤 손을 모두 뗐다가 다시 조작';
+    else if (other) m = '';
+    else if (!linked) m = '조이스틱이나 버튼을 누르면 로봇에 연결합니다';
+    else if (u.retired) m = '연결 끊음 — 메뉴 › 연결(새 세션)';
+    else if (!u.connected) m = '로봇이 응답하지 않습니다(UDP ' + (cfg && cfg.port ? cfg.port : 5001) + ')';
+    else if (base.needs_release) m = '손을 모두 뗐다가 다시 누르세요';
+    else if (base.last_block_reason === 'not_owner' || base.reason === 'not_owner') m = '로봇을 다른 조종기(VR 등)가 쓰는 중입니다';
+    $('msg').textContent = m;
+  },
+  rejects(p) {
+    const rj = p.u.arm_last_reject;
+    if (rj && num(rj.age_s, 99) < 5 && rj.sequence !== lastRejectSeq) {
+      lastRejectSeq = rj.sequence;
+      const why = rj.reason === 'workspace_limit' ? '작업 공간 밖' : (rj.reason === 'ik_unreachable' ? '도달할 수 없는 자세' : rj.reason);
+      toast('팔 목표 거부: ' + why + ' — 마지막 수락 위치로 되돌림. 계속 거부되면 "기본 자세"를 누르세요', 'bad');
+    }
+  },
+};
+// rosbridge 항목이 아예 없는 응답(이전 로봇)은 경고하지 않는다
+function s_rbUnknown(rb) { return rb.connected === undefined && rb.enabled === undefined; }
+function render(s) {
+  if (!s || typeof s !== 'object') return;
+  st = s;
+  const p = parts(s);
+  const rs = (p.rb.status && num(p.rb.status_age_s, 99) < 2.5) ? p.rb.status : null;
+  armEnabled = !!s.arm_enabled;
+  const other = !!(p.ctl.owner && !p.ctl.you);
+  const es = !!(p.u.emergency || (rs && rs.emergency_stop));
+  const linked = p.ses.live !== false && p.ses.reason !== 'estop_only' && p.ses.reason !== 'closing';
+  document.body.classList.toggle('locked', other);
+  document.body.classList.toggle('armoff', !armEnabled);
+  document.body.classList.toggle('estopped', es);
+  View.chips(p, linked, es, rs);
+  View.arm(p, es);
+  View.message(p, linked, es, other);
+  View.rejects(p);
+  if (ui.sheetOpen) renderSheet(s);
+}
+function renderSheet(s) {
+  const {u, base, arm, rb, ctl, ses} = parts(s);
+  const ms = v => (typeof v === 'number' ? v : '-');
+  const rows = [
+    ['로봇', cfg ? `${cfg.robot || location.hostname}:${cfg.port || '-'} (웹 ${location.host})` : location.host],
+    ['세션', `${ses.mode || '-'} · ${ses.live === false ? '닫힘' : (ses.reason === 'estop_only' ? '비상정지만 보내는 중(곧 닫힘)' : (ses.reason === 'closing' ? '닫히는 중' : '열림'))}`],
+    ['조종권', ctl.you ? '이 화면' : (ctl.owner ? `${ctl.owner.name || '?'} (${ctl.owner.addr || '?'})` : '없음')],
+    ['차체 채널', `${ko(base.state)} / ${base.reason || '-'}` + (base.last_block_reason ? ' · 마지막 해제: ' + base.last_block_reason : '')],
+    ['팔 채널', `${ko(arm.state)} / ${arm.reason || '-'}` + (arm.last_block_reason ? ' · 마지막 해제: ' + arm.last_block_reason : '')],
+    ['ACK 지연', typeof u.ack_ms_last !== 'number' ? '-' : `${u.ack_ms_last} ms (중앙 ${ms(u.ack_ms_p50)}, 최대 ${ms(u.ack_ms_max)}, 허용 ${typeof u.ack_timeout_s === 'number' ? Math.round(u.ack_timeout_s * 1000) : '-'} ms)`],
+    ['통신 끊김', `${ms(u.link_drops)}회 · 자동 재무장 차체 ${ms(base.auto_rearms)} / 팔 ${ms(arm.auto_rearms)}`],
+    ['패킷', `송신 ${ms(u.packets_sent)}, ACK ${ms(u.acks)}, 늦은 ACK ${ms(u.late_acks)}`],
+    ['rosbridge', rb.enabled === false ? '사용 안 함' : (rb.connected ? '연결' : '미연결')],
+    ['영상', document.body.dataset.videoUrl || '-'],
+    ['이 화면', `${SCREEN_NAME} · ${UI_VERSION} · ${SCREEN.slice(0, 4)}`],
+  ];
+  const dl = $('detail'); dl.textContent = '';
+  for (const [k, v] of rows) { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = String(v); dl.append(dt, dd); }
+  $('events').textContent = (Array.isArray(s.events) ? s.events : []).slice(-8).join('\n');
+}
+async function poll() {
+  const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 2000);
+  try {
+    const r = await fetch('/api/state?screen=' + SCREEN, {cache:'no-store', signal:ac.signal});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+    failCount = 0;
+  } catch (e) {
+    failCount++;
+    chip('cLink', '로봇 웹 조종기 응답 없음', 'bad');
+    if (failCount >= 3 && (joy.id !== null || turn.id !== null || holds.size)) releaseAll(false);
+  } finally { clearTimeout(tm); }
+  setTimeout(poll, document.hidden ? 1000 : 250);
+}
+
+(async function init() {
+  Video.set(Video.mode); paintSpeed(); paint();
+  for (;;) {
+    try {
+      const r = await fetch('/api/config', {cache:'no-store'});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      cfg = await r.json();
+      if (cfg && typeof cfg === 'object') break;
+    } catch (e) { chip('cLink', '로봇 웹 조종기 연결 중…', 'warn'); }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!speed) {   // 이 화면에 저장된 속도가 없으면 로봇 설정의 기본값(v2.3 로봇 0.6). 값이 없는 이전 로봇은 0.3
+    const d = cfg.ui && Number(cfg.ui.default_speed);
+    speed = (d > 0 && d <= 1) ? d : 0.3;
+    paintSpeed();
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

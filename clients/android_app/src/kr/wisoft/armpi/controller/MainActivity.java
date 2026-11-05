@@ -3,6 +3,7 @@ package kr.wisoft.armpi.controller;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -36,25 +37,32 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * ArmPi 조종기 Android 앱(얇은 껍데기).
+ * ArmPi 조종기 Android 앱.
  *
  * 첫 화면: 로봇 찾기(UDP 5002 검색) / IP 직접 입력(최근 값 기억) → 연결하면 전체 화면 WebView 로
- * http://&lt;IP&gt;:18765/mobile (로봇 안에서 도는 웹 조종기의 휴대폰 화면)을 연다. 뒤로 가기 = 첫 화면.
- * 조종 규칙(입력 0.3 s 끊기면 중립, 손 떼면 중립, 조종권, 비상정지)은 모두 웹 화면·로봇 서버 쪽에 있다.
- * 앱은 화면 꺼짐 방지, 가로 고정, 백그라운드로 갈 때 중립 송신·JS 타이머 정지만 맡는다.
+ * 앱 안 조종 화면(assets/app_ui/control.html)을 연다. 뒤로 가기 = 첫 화면.
+ * 조종 화면은 http://&lt;IP&gt;:18765/app-ui/control.html 주소로 열고, 그 경로는 앱이 assets 에서 꺼내 준다
+ * (AppUiPolicy). 그래서 로봇 웹 조종기와 출처가 같아 로봇의 /api/* 를 그대로 쓴다(로봇 쪽 변경 없음).
+ * 조종 화면이 보낼 수 있는 요청은 고른 로봇의 18765(/api/*)와 8080(/stream)뿐이다.
+ * 조종 규칙(입력 0.3 s 끊기면 중립, 손 떼면 중립, 조종권, 비상정지)은 조종 화면과 로봇 서버 쪽에 있다.
+ * 앱은 화면 꺼짐 방지, 백그라운드로 갈 때 중립 송신·JS 타이머 정지를 맡는다. 화면은 가로·세로 모두 쓴다.
  */
 public class MainActivity extends Activity {
-    static final int WEB_PORT = 18765;
+    static final int WEB_PORT = AppUiPolicy.WEB_PORT;
     static final String PREFS = "armpi";
     static final String KEY_RECENT = "recent";
     static final int MAX_RECENT = 5;
-    static final String UA_MARK = " ArmPiController-Android/1.0";
+    static final String UA_MARK = " ArmPiController-Android/1.1";
     static final int BG = 0xFF0D1014, PANEL = 0xFF1B2128, LINE = 0xFF2E3640, TEXT = 0xFFEEF2F7, DIM = 0xFFA8B2C0,
             ACCENT = 0xFF4EA1FF, BAD = 0xFFFF6B6B, OK = 0xFF3ECF8E;
 
@@ -62,12 +70,12 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private FrameLayout root;
     private ScrollView home;
+    private LinearLayout cols, leftCol;
     private LinearLayout foundList, recentRow;
     private EditText ipEdit;
     private TextView status;
     private Button findBtn, connectBtn;
     private WebView web;
-    private String webHost;
     private boolean paused;
     private boolean discovering;
     private int connectSeq;
@@ -128,21 +136,24 @@ public class MainActivity extends Activity {
     private void buildHome() {
         home = new ScrollView(this);
         home.setFillViewport(true);
-        LinearLayout cols = new LinearLayout(this);
-        cols.setOrientation(LinearLayout.HORIZONTAL);
-        cols.setPadding(dp(28), dp(18), dp(28), dp(18));
+        cols = new LinearLayout(this);
         home.addView(cols, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        half.rightMargin = dp(24);
-        cols.addView(left, half);
-        cols.addView(right, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        leftCol = left;
+        cols.addView(left);
+        cols.addView(right);
+        layoutHome();
 
-        left.addView(text("ArmPi 조종기", 26, TEXT, true));
+        LinearLayout title = new LinearLayout(this);
+        title.setOrientation(LinearLayout.HORIZONTAL);
+        title.setGravity(Gravity.BOTTOM);
+        title.addView(text("ArmPi 조종기", 26, TEXT, true));
+        title.addView(text("  앱 " + appVersion(), 13, DIM, false));
+        left.addView(title);
         left.addView(text("같은 와이파이의 로봇을 찾거나 IP 를 입력하세요.", 14, DIM, false), lp(-1, -2, 0, 4));
         findBtn = button("로봇 찾기", true);
         findBtn.setOnClickListener(v -> startDiscovery());
@@ -191,10 +202,46 @@ public class MainActivity extends Activity {
         right.addView(text("· 휴대폰과 로봇이 같은 와이파이에 있어야 합니다.\n"
                 + "· 로봇이 와이파이에 못 붙으면 대체 AP 'ArmPi-ROS2'를 켭니다(비밀번호는 담당자에게 확인). "
                 + "휴대폰을 그 AP 에 연결한 뒤 192.168.149.1 로 연결하세요.\n"
-                + "· 연결하면 http://<IP>:" + WEB_PORT + "/mobile 조종 화면이 열립니다. 뒤로 가기 = 이 화면.\n"
+                + "· 연결하면 앱 안 조종 화면이 열립니다(로봇 웹 조종기 http://<IP>:" + WEB_PORT + " 의 API 사용). 뒤로 가기 = 이 화면.\n"
+                + "· 조종 화면: 가로 = 이동 | 카메라 | 비상정지, 세로 = 카메라 / 비상정지 / 이동. 팔은 \"팔 조종\" 버튼으로 엽니다.\n"
                 + "· 처음에는 바퀴를 띄우고 시험하세요. 빨간 버튼 = 비상정지(소프트웨어 정지). 전원 스위치를 손 닿는 곳에 두세요.",
                 13, DIM, false), lp(-1, -2, 0, 14));
         root.addView(home, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    /** 첫 화면: 가로는 두 칸(찾기 | IP 입력), 세로는 위아래로. */
+    private void layoutHome() {
+        if (cols == null) return;
+        boolean portrait = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+        cols.setOrientation(portrait ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        cols.setPadding(dp(portrait ? 18 : 28), dp(18), dp(portrait ? 18 : 28), dp(18));
+        LinearLayout.LayoutParams a, b;
+        if (portrait) {
+            a = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            b = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            b.topMargin = dp(22);
+        } else {
+            a = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            a.rightMargin = dp(24);
+            b = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        }
+        leftCol.setLayoutParams(a);
+        cols.getChildAt(1).setLayoutParams(b);
+    }
+
+    @SuppressWarnings("deprecation")
+    private String appVersion() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "?";
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration c) {
+        super.onConfigurationChanged(c);
+        layoutHome();   // 조종 화면(WebView)은 스스로 가로·세로 배치를 바꾼다(돌리면 입력 중립)
     }
 
     private void setStatus(String s, int color) {
@@ -337,7 +384,7 @@ public class MainActivity extends Activity {
                 connectBtn.setEnabled(true);
                 if (error == null) {
                     setStatus("", DIM);
-                    openWeb(base, h);
+                    openWeb(h, p);
                 } else {
                     setStatus("연결 실패 (" + h + ":" + p + ") — " + error + "\n확인: ① 휴대폰과 로봇이 같은 와이파이인지 "
                             + "② 로봇에서 웹 조종기(armpi-web 서비스)가 켜져 있는지 ③ IP 주소가 맞는지", BAD);
@@ -352,8 +399,15 @@ public class MainActivity extends Activity {
         ipEdit.clearFocus();
     }
 
-    private void openWeb(String base, String host) {
+    private void openWeb(String host, int port) {
         if (web != null) closeWeb(null, DIM);
+        final AppUiPolicy policy;
+        try {
+            policy = new AppUiPolicy(host, port);
+        } catch (IllegalArgumentException e) {
+            setStatus("주소 오류: " + e.getMessage(), BAD);
+            return;
+        }
         final WebView w = new WebView(this);
         WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
@@ -363,6 +417,8 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setDisplayZoomControls(false);
+        s.setAllowFileAccess(false);        // 조종 화면은 file:// 이 아니라 아래 shouldInterceptRequest 로 준다
+        s.setAllowContentAccess(false);
         s.setUserAgentString(s.getUserAgentString() + UA_MARK);
         w.setBackgroundColor(BG);
         w.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -371,14 +427,33 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
-                return webHost == null || !webHost.equalsIgnoreCase(u.getHost());  // 같은 로봇 주소만 앱 안에서 연다
+                return !policy.navigationAllowed(u.getScheme(), u.getHost(), u.getPort(), u.getPath());  // 앱 안 조종 화면만
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                Uri u = r.getUrl();
+                AppUiPolicy.Decision d = policy.decide(u.getScheme(), u.getHost(), u.getPort(), u.getPath());
+                if (d.kind == AppUiPolicy.Kind.NETWORK) return null;          // 로봇 API·카메라는 그대로
+                Map<String, String> h = new HashMap<>();
+                h.put("Cache-Control", "no-store");
+                if (d.kind == AppUiPolicy.Kind.ASSET) {
+                    try {
+                        InputStream in = getAssets().open(d.asset);
+                        return new WebResourceResponse(d.mime, "utf-8", 200, "OK", h, in);
+                    } catch (Exception e) {
+                        return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", h,
+                                new ByteArrayInputStream(new byte[0]));
+                    }
+                }
+                return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", h,   // 허용 밖 주소는 막는다
+                        new ByteArrayInputStream(new byte[0]));
             }
 
             @Override
             public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame() && v == web) {
-                    closeWeb("조종 화면을 불러오지 못했습니다: " + e.getDescription()
-                            + "\n로봇의 웹 조종기(포트 " + WEB_PORT + ")가 켜져 있는지 확인하세요.", BAD);
+                    closeWeb("조종 화면을 열지 못했습니다: " + e.getDescription(), BAD);
                 }
             }
 
@@ -390,11 +465,10 @@ public class MainActivity extends Activity {
             }
         });
         web = w;
-        webHost = host;
         root.addView(w, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         home.setVisibility(View.GONE);
         setFullscreenUi(true);
-        w.loadUrl(base + "/mobile");
+        w.loadUrl(policy.pageUrl());
         w.requestFocus();
     }
 
@@ -402,7 +476,6 @@ public class MainActivity extends Activity {
     private void closeWeb(String message, int color) {
         final WebView w = web;
         web = null;
-        webHost = null;
         if (w != null) {
             w.evaluateJavascript("window.armpiNeutral && window.armpiNeutral(true)", null);
             w.setVisibility(View.GONE);
