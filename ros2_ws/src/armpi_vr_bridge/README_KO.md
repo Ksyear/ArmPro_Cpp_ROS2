@@ -53,8 +53,14 @@ VrBridgeNode (rclcpp) ─ /armpi/cmd_vel, /armpi/arm/target, /armpi/estop_reques
   lease 는 소유자의 새 번호 패킷(어느 채널·이벤트든)이 갱신한다.
 - ACK `state` 는 그 패킷의 채널 상태(`command`·이벤트 → 차체, `arm_command` → 팔). 형식 오류 패킷도 `type` 이 `arm_command` 면 팔 채널 상태.
 - 차체: `vx = forward×0.10`, `vy = strafe×0.10`(+왼쪽), `wz = turn×0.60`(+좌회전). 중립 = `control_active:false` 또는 세 축 0.
-- 팔: 중립 = `control_active:false`(좌표 무시, 현재 위치 유지). 활성 목표가 작업 공간 상자 밖 → `workspace_limit`,
-  IK 결과가 `kOk` 아님(`kOutOfReach`·`kJointLimit`·`kInvalid`) → `ik_unreachable`. 거부 시 이전 목표 유지.
+- 팔: 중립 = `control_active:false`(좌표 무시, 현재 위치 유지). 닿을 수 없는 활성 목표는 `arm.target_policy`가 정한다.
+  - `reject`(코드 기본값·규격 원래 동작): 작업 공간 상자 밖 → `workspace_limit`, IK 결과가 `kOk` 아님(`kOutOfReach`·`kJointLimit`·`kInvalid`) → `ik_unreachable`. 거부 시 이전 목표 유지.
+  - `nearest`(armpi.yaml·vr_bridge.yaml 기본, 2026-11-11): `armpi_kinematics::TargetProjector`로 상자 면 → 가까운 pitch → 마지막 목표 쪽 위치 순서로 보정해 수락(그리퍼는 그대로). 기준 목표가 없고 pitch로도 안 되면 `ik_unreachable`. 보정 횟수는 상태 JSON `packets.arm_adjust`와 10초 통계 로그.
+- 제어기 게이트(`/armpi/control_state`): 미수신·2.0 s 초과·`udp_allowed:false` → 활성 명령 `not_owner`(중립은 수락),
+  게이트가 닫히는 순간 움직이던 채널은 정지(새 중립 요구). `estop:true` → 세션 비상정지 상태(활성 `emergency_stop`),
+  `fault:true` → `fault`. 형식이 틀린 control_state(불리언 `estop`·`fault`·`udp_allowed` 누락)는 무시한다(→ 2 s 뒤 차단).
+- 비상정지: 소유자·비소유자(유효 UUID, 소유자가 있거나 retire 된 UUID) 모두 latch. 해제는 소유자만, 해제 뒤 두 채널 새 중립.
+  유효 비상정지 = UDP latch **또는** 제어기 `estop`. UDP 해제 요청을 보내도 제어기가 `estop:true` 를 보고하는 동안은 비상정지 유지.
 - 제어기 게이트(`/armpi/control_state`): 미수신·2.0 s 초과·`udp_allowed:false` → 활성 명령 `not_owner`(중립은 수락),
   게이트가 닫히는 순간 움직이던 채널은 정지(새 중립 요구). `estop:true` → 세션 비상정지 상태(활성 `emergency_stop`),
   `fault:true` → `fault`. 형식이 틀린 control_state(불리언 `estop`·`fault`·`udp_allowed` 누락)는 무시한다(→ 2 s 뒤 차단).

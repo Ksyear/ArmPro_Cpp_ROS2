@@ -24,17 +24,17 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]}"; do kill -TERM "$p" 2>/dev/null; done; wait 2>/dev/null; }
 trap cleanup EXIT
 
-echo "== 1. 가짜 로봇"
-$PY protocol_v3/mock_robot.py --bind 127.0.0.1 > "$OUT/mock_robot.log" 2>&1 &
+echo "== 1. 가짜 로봇(팔 목표 reject: 파이썬 Mac 조종기·참조 클라이언트는 버튼 목표 보정이 없어 규격 v3 원래 동작으로 시험)"
+$PY protocol_v3/mock_robot.py --bind 127.0.0.1 --arm-policy reject > "$OUT/mock_robot.log" 2>&1 &
 MOCK=$!; PIDS+=($MOCK)
 sleep 1
 
 echo "== 2. 적합성 시험(기본)"
-$PY protocol_v3/conformance_test.py --host 127.0.0.1 -v --json-report "$OUT/conformance_default.json" \
+$PY protocol_v3/conformance_test.py --host 127.0.0.1 --arm-policy reject -v --json-report "$OUT/conformance_default.json" \
   > "$OUT/conformance_default.txt" 2>&1; echo "exit=$?" >> "$OUT/conformance_default.txt"
 tail -3 "$OUT/conformance_default.txt"
 echo "== 2b. 적합성 시험(해석 시험 + rosbridge 외부 비상정지)"
-$PY protocol_v3/conformance_test.py --host 127.0.0.1 --rosbridge-port 9090 --interpretation -v \
+$PY protocol_v3/conformance_test.py --host 127.0.0.1 --arm-policy reject --rosbridge-port 9090 --interpretation -v \
   --json-report "$OUT/conformance_full.json" > "$OUT/conformance_full.txt" 2>&1; echo "exit=$?" >> "$OUT/conformance_full.txt"
 tail -3 "$OUT/conformance_full.txt"
 
@@ -50,7 +50,7 @@ $PY clients/mac_controller/armpi_mac_controller.py --robot 127.0.0.1 --http-port
   > "$OUT/mac_controller.log" 2>&1 &
 CTL=$!; PIDS+=($CTL)
 sleep 1.5
-$PY "$CHECK" --http 127.0.0.1:18765 --json "$OUT/e2e_mac_controller.json" \
+$PY "$CHECK" --http 127.0.0.1:18765 --arm-policy reject --json "$OUT/e2e_mac_controller.json" \
   > "$OUT/e2e_mac_controller.txt" 2>&1; echo "exit=$?" >> "$OUT/e2e_mac_controller.txt"
 tail -3 "$OUT/e2e_mac_controller.txt"
 kill -TERM $CTL; wait $CTL 2>/dev/null
@@ -80,7 +80,9 @@ kill -TERM $MOCK; wait $MOCK 2>/dev/null
 
 echo "== 6. 대상 조건별 적합성 시험"
 : > "$OUT/conformance_conditions.txt"
-for spec in "15011 15012 control_missing --control-state=missing" "15021 15022 udp_blocked --control-state=udp_blocked" \
+# normal_nearest: 로봇 기본 팔 목표 처리(nearest, 가짜 로봇·적합성 시험 둘 다 기본값)
+for spec in "15051 15052 normal --arm-policy=nearest" \
+            "15011 15012 control_missing --control-state=missing" "15021 15022 udp_blocked --control-state=udp_blocked" \
             "15031 15032 fault --control-state=fault" "15041 15042 source_blocked --allowed-sources=10.0.0.0/8"; do
   set -- $spec
   $PY protocol_v3/mock_robot.py --bind 127.0.0.1 --port $1 --discovery-port $2 --rosbridge-port 0 --camera-port 0 $4 \

@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "armpi_kinematics/reachability.hpp"
 #include "armpi_vr_bridge/protocol.hpp"
 
 namespace armpi_vr_bridge {
@@ -19,6 +20,7 @@ struct RxSummary {
   uint64_t bytes{0};
   uint64_t filtered{0};  // allowed_sources 로 버린 수
   std::map<std::string, uint64_t> reasons;
+  std::map<std::string, uint64_t> arm_adjust;  // nearest 정책에서 바꿔 받은 팔 목표 수(방식별: pitch, box+pitch …)
   std::optional<double> rate_hz;
   std::optional<double> interval_mean_s;
   std::optional<double> interval_p50_s;
@@ -33,7 +35,8 @@ struct RxSummary {
 class RxStats {
  public:
   explicit RxStats(std::size_t window = 400) : window_(window) {}
-  void observe(double now, std::size_t size, const Ack& ack);
+  // arm_adjust: 수락한 팔 목표를 바꾼 방식(armpi_kinematics::ReachAdjust 비트, 0 = 그대로)
+  void observe(double now, std::size_t size, const Ack& ack, unsigned arm_adjust = 0);
   void count_filtered() { ++filtered_; }
   RxSummary summary(double now) const;
 
@@ -41,6 +44,7 @@ class RxStats {
   std::size_t window_;
   uint64_t packets_{0}, accepted_{0}, bytes_{0}, filtered_{0};
   std::map<std::string, uint64_t> reasons_;
+  std::map<std::string, uint64_t> arm_adjust_;
   std::optional<double> last_rx_;
   std::deque<double> intervals_;
   std::unordered_map<std::string, int64_t> last_seq_;

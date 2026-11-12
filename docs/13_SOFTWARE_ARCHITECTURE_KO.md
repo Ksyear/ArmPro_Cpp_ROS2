@@ -36,7 +36,7 @@ ROS 2 패키지는 표준 구조를 따른다: `package.xml`(format 3), `CMakeLi
 |---|---|---|
 | `armpi_common` | 라이브러리(ROS 없음) | 엄격한 JSON 해석·작성(중복 키·정수/실수 구분·UTF-8 검사), 고정 소수 출력 |
 | `armpi_protocol` | 라이브러리(ROS 없음) | Protocol v3 형식(패킷 해석·ACK 작성), 클라이언트 쪽 패킷 작성·ACK 해석, 클라이언트 세션 `V3Client`, UDP 연결 |
-| `armpi_kinematics` | 라이브러리 | 팔 IK/FK |
+| `armpi_kinematics` | 라이브러리 | 팔 IK/FK, 닿지 않는 목표 보정(`TargetProjector`, 2026-11-11 — 수신기·웹 조종기·제어기가 같은 규칙을 쓰도록 한 곳에 둠) |
 | `armpi_hardware` | 라이브러리 | 바퀴 보드·확장 보드(I2C), 버스 서보(반이중 UART), GPIO. 실제/가짜 구현 |
 | `armpi_interfaces` | 메시지 | `ArmTarget.msg` |
 | `armpi_control` | 노드 `armpi_control_node` | 비상정지 latch, watchdog, 차체·팔 제어, 상태 발행, 부팅 점검 |
@@ -48,7 +48,7 @@ ROS 2 패키지는 표준 구조를 따른다: `package.xml`(format 3), `CMakeLi
 ```
 armpi_common ◀── armpi_protocol ◀── armpi_vr_bridge ──▶ armpi_kinematics, armpi_interfaces
       ▲                 ▲
-      │                 └──────── armpi_web_gateway
+      │                 └──────── armpi_web_gateway ──▶ armpi_kinematics(버튼 목표 보정, 2026-11-11)
       └── armpi_control ──▶ armpi_hardware, armpi_kinematics, armpi_interfaces
 armpi_power (rclcpp, std_msgs 만)
 ```

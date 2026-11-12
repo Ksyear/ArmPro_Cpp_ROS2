@@ -870,7 +870,8 @@ class T05Watchdog(Base):
 
     @NORMAL
     def test_05_arm_rejects_do_not_refresh(self):
-        """workspace_limit·ik_unreachable 거부는 팔 watchdog 을 갱신하지 않는다 (사양 2.2·3절)"""
+        """reject: workspace_limit·ik_unreachable 거부는 팔 watchdog 을 갱신하지 않는다 (사양 2.2·3절).
+        nearest: 범위 밖·닿지 않는 목표도 가까운 자세로 수락되므로 watchdog 이 갱신되고 팔 채널은 active 를 유지한다."""
         p = self.peer()
         self.ready(p)
         self.assertAck(p.arm(True), True, "ok", "active")
@@ -881,6 +882,11 @@ class T05Watchdog(Base):
             toggle[0] ^= 1
             return p.arm(True, outside if toggle[0] else CFG.unreachable)
         acks = self.feed(CFG.arm_wd + CFG.margin, bad)
+        if CFG.arm_policy == "nearest":
+            for a in acks:
+                self.assertAck(a, True, "ok", "active", note="nearest: 보정해서 수락")
+            self.assertAck(p.arm(True), True, "ok", "active", note="보정 목표만 온 뒤 정상 목표")
+            return
         self.assertIn(acks[0]["reason"], ("workspace_limit",), "첫 거부 사유")
         for a in acks:
             self.assertFalse(a["accepted"], "범위 밖 목표가 수락됨: %r" % a)
@@ -1017,8 +1023,13 @@ class T07ChannelState(Base):
         p = self.peer()
         self.ready(p)
         self.assertAck(p.cmd(True, 0.2), True, "ok", "active")
-        outside = (CFG.workspace[1] + 0.05, 0.0, CFG.reachable[2], CFG.reachable[3])
-        ack = p.arm(True, outside)
+        if CFG.arm_policy == "nearest":
+            # nearest 는 범위 밖 목표를 보정해서 받으므로, 형식 오류(그리퍼 2.0)로 거부되는 팔 패킷으로 확인한다
+            seq = p.next_seq()
+            ack = p.request(raw_obj(replace(arm_items(p.cid, seq, True), "gripper", "2.0")), seq)
+        else:
+            outside = (CFG.workspace[1] + 0.05, 0.0, CFG.reachable[2], CFG.reachable[3])
+            ack = p.arm(True, outside)
         self.assertEqual(ack["state"], "idle", "팔 채널은 idle 이어야 함: %r" % ack)
         self.assertFalse(ack["accepted"])
 
@@ -1035,7 +1046,7 @@ class T08Arm(Base):
 
     @NORMAL
     def test_01_workspace_limit(self):
-        """작업 공간 상자 밖(6면 각각) → workspace_limit, 채널은 active 유지 (사양 2.2)"""
+        """작업 공간 상자 밖(6면 각각) → reject: workspace_limit / nearest: 상자 면으로 보정해 수락. 채널은 active 유지 (사양 2.2)"""
         p = self.peer()
         self.ready(p)
         self.assertAck(p.arm(True), True, "ok", "active")
@@ -1044,16 +1055,22 @@ class T08Arm(Base):
                  "y<y_min": (x, w[2] - 0.05, z), "z>z_max": (x, y, w[5] + 0.05), "z<z_min": (x, y, w[4] - 0.05)}
         for name, (xx, yy, zz) in faces.items():
             with self.subTest(face=name):
-                self.assertAck(p.arm(True, (xx, yy, zz, pitch)), False, "workspace_limit", "active", estop=False)
+                if CFG.arm_policy == "nearest":
+                    self.assertAck(p.arm(True, (xx, yy, zz, pitch)), True, "ok", "active", estop=False)
+                else:
+                    self.assertAck(p.arm(True, (xx, yy, zz, pitch)), False, "workspace_limit", "active", estop=False)
                 self.assertAck(p.arm(True), True, "ok", "active", note="다시 정상 목표")
 
     @NORMAL
     def test_02_ik_unreachable(self):
-        """작업 공간 안이지만 IK 해가 없는 목표 → ik_unreachable, 채널은 active 유지"""
+        """작업 공간 안이지만 IK 해가 없는 목표 → reject: ik_unreachable / nearest: 가까운 자세로 수락. 채널은 active 유지"""
         p = self.peer()
         self.ready(p)
         self.assertAck(p.arm(True), True, "ok", "active")
-        self.assertAck(p.arm(True, CFG.unreachable), False, "ik_unreachable", "active")
+        if CFG.arm_policy == "nearest":
+            self.assertAck(p.arm(True, CFG.unreachable), True, "ok", "active")
+        else:
+            self.assertAck(p.arm(True, CFG.unreachable), False, "ik_unreachable", "active")
         self.assertAck(p.arm(True), True, "ok", "active")
 
     @NORMAL
@@ -1298,6 +1315,8 @@ def main(argv=None):
                     help="IK 해가 있는 점 x,y,z,pitch (기본 자세의 FK, 기본 IK 치수 기준)")
     ap.add_argument("--unreachable", type=lambda t: _floats(t, 4), default=(0.28, 0.0, 0.30, 0.0),
                     help="작업 공간 안이지만 IK 해가 없는 점 x,y,z,pitch (기본 IK 치수 기준)")
+    ap.add_argument("--arm-policy", choices=["nearest", "reject"], default="nearest",
+                    help="대상의 arm.target_policy(로봇 armpi.yaml 기본 nearest, 규격 v3 원래 동작 reject)")
     ap.add_argument("--json-report", help="결과 JSON 저장 경로")
     ap.add_argument("--no-preflight", action="store_true")
     args, rest = ap.parse_known_args(argv)
@@ -1308,9 +1327,11 @@ def main(argv=None):
     CFG.base_wd, CFG.arm_wd, CFG.lease, CFG.margin = args.base_watchdog, args.arm_watchdog, args.lease, args.margin
     CFG.ack_wait = args.ack_wait
     CFG.workspace, CFG.reachable, CFG.unreachable = args.workspace, args.reachable, args.unreachable
+    CFG.arm_policy = args.arm_policy
 
-    print("ArmPi Protocol v3 적합성 시험: 대상 %s:%d (검색 %d), 조건 %s, 해석 시험 %s"
-          % (CFG.ip, CFG.port, CFG.discovery_port, CFG.condition, "포함" if CFG.interpretation else "제외"))
+    print("ArmPi Protocol v3 적합성 시험: 대상 %s:%d (검색 %d), 조건 %s, 팔 목표 처리 %s, 해석 시험 %s"
+          % (CFG.ip, CFG.port, CFG.discovery_port, CFG.condition, CFG.arm_policy,
+             "포함" if CFG.interpretation else "제외"))
     if not args.no_preflight:
         problem = preflight()
         if problem:
@@ -1329,7 +1350,7 @@ def main(argv=None):
             print("  [%s] %s — %s" % (r["status"].upper(), r["id"], r["detail"].strip().splitlines()[-1]))
     if args.json_report:
         report = {"target": "%s:%d" % (CFG.ip, CFG.port), "discovery_port": CFG.discovery_port,
-                  "condition": CFG.condition, "interpretation": CFG.interpretation,
+                  "condition": CFG.condition, "arm_policy": CFG.arm_policy, "interpretation": CFG.interpretation,
                   "timing": {"base_watchdog": CFG.base_wd, "arm_watchdog": CFG.arm_wd, "lease": CFG.lease,
                              "margin": CFG.margin},
                   "arm_points": {"workspace": CFG.workspace, "reachable": CFG.reachable, "unreachable": CFG.unreachable},

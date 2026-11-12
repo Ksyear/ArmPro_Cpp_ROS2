@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "armpi_kinematics/reachability.hpp"
+#include "armpi_kinematics/ros_params.hpp"
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "armpi_protocol/client.hpp"
 #include "armpi_web_gateway/controller.hpp"
@@ -128,6 +130,42 @@ int main(int argc, char** argv) {
   copt.ack_timeout_s = ack_timeout;
   copt.home = home;
   copt.log = log;
+
+  // 팔 목표 보정(armpi.yaml arm.target_policy). 로봇 수신기와 같은 규칙·같은 매개변수로 버튼 목표를 닿는 자세에 맞춘다.
+  // 그래야 닿지 않는 쪽으로 버튼을 계속 눌러도 목표가 앞서 나가지 않고, 반대 버튼을 누르면 바로 움직인다.
+  // 하드웨어 프로필(관절 기준·범위)이 없으면 수신기와 계산이 다를 수 있으므로 끄고 로봇 수신기의 보정에만 맡긴다.
+  armpi_kinematics::ArmParamDefaults arm_def;
+  arm_def.workspace = armpi_kinematics::Workspace{0.05, 0.32, -0.25, 0.25, -0.08, 0.32};
+  arm_def.base_height_m = 0.064605;
+  arm_def.upper_arm_m = 0.10048;
+  arm_def.forearm_m = 0.094714;
+  arm_def.hand_m = 0.16331;
+  arm_def.min_wrist_height_m = 0.0;
+  arm_def.min_elbow_bend_rad = 0.05;
+  armpi_kinematics::ArmParams arm;
+  try {
+    arm = armpi_kinematics::declare_arm_params(*node, arm_def);
+  } catch (const std::exception& e) {
+    RCLCPP_FATAL(logger, "팔 매개변수 오류: %s", e.what());
+    return 2;
+  }
+  std::string arm_filter_note = "끔(arm.target_policy: reject)";
+  if (arm.target_policy == armpi_kinematics::TargetPolicy::kNearest) {
+    if (!arm.blank_profile_keys.empty()) {
+      arm_filter_note = "끔(하드웨어 프로필 값 없음 → 로봇 수신기만 보정)";
+    } else {
+      auto proj = std::make_shared<armpi_kinematics::TargetProjector>(arm.kinematics, arm.workspace, arm.reach);
+      copt.arm_target_filter = [proj](const armpi_protocol::ArmTarget& want, const armpi_protocol::ArmTarget& cur) {
+        const armpi_kinematics::Pose anchor{cur.x, cur.y, cur.z, cur.pitch};
+        const bool anchor_ok = proj->reachable(anchor);
+        const auto r = proj->project(armpi_kinematics::Pose{want.x, want.y, want.z, want.pitch},
+                                     anchor_ok ? &anchor : nullptr);
+        if (!r.ok) return want;  // 로봇이 판단(거부)하게 둔다
+        return armpi_protocol::ArmTarget{r.pose.x, r.pose.y, r.pose.z, r.pose.pitch, want.gripper};
+      };
+      arm_filter_note = "nearest(로봇 수신기와 같은 규칙)";
+    }
+  }
   auto client = std::make_shared<armpi_protocol::V3Client>(std::move(link), copt);
 
   gw::RosRobotLink robot_link(*node, log);
@@ -173,6 +211,7 @@ int main(int argc, char** argv) {
   RCLCPP_INFO(logger, "ArmPi 웹 조종기(C++): 로봇 %s UDP %d, 세션 %s, 화면 파일 %s", robot.c_str(), port,
               session_mode.c_str(), www_dir.c_str());
   RCLCPP_INFO(logger, "HTTP 수신 주소: %s:%d", bind.c_str(), server.port());
+  RCLCPP_INFO(logger, "팔 버튼 목표 보정: %s", arm_filter_note.c_str());
   if (public_bind) {
     const std::string ip = local_ipv4();
     if (!ip.empty()) {

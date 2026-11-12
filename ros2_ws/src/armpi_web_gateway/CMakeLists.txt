@@ -14,6 +14,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(armpi_common REQUIRED)
 find_package(armpi_protocol REQUIRED)
+find_package(armpi_kinematics REQUIRED)
 find_package(Threads REQUIRED)
 
 # 웹 조종기 핵심(ROS 비의존): 조종권·세션·명령(Controller), HTTP 경로(WebApi), HTTP 서버
@@ -33,7 +34,7 @@ target_link_libraries(armpi_web_gateway_core PUBLIC armpi_protocol::armpi_protoc
 
 # ROS 2 노드: rclcpp 어댑터 + 조립
 add_executable(armpi_web_gateway_node src/ros_robot_link.cpp src/main.cpp)
-target_link_libraries(armpi_web_gateway_node armpi_web_gateway_core)
+target_link_libraries(armpi_web_gateway_node armpi_web_gateway_core armpi_kinematics::armpi_kinematics)
 ament_target_dependencies(armpi_web_gateway_node rclcpp std_msgs std_srvs sensor_msgs ament_index_cpp)
 
 install(TARGETS armpi_web_gateway_node DESTINATION lib/${PROJECT_NAME})

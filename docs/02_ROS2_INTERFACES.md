@@ -7,7 +7,7 @@
 | 패키지 | 내용 | 비고 |
 |---|---|---|
 | `armpi_interfaces` | 메시지 정의 (`ArmTarget.msg`) | |
-| `armpi_kinematics` | 팔 IK/FK 라이브러리(헤더 + 정적 라이브러리), 노드 없음 | 링크 길이: `ros2_ws/src/armpi_bringup/config/armpi.yaml`, 관절 기준·범위: 하드웨어 프로필 |
+| `armpi_kinematics` | 팔 IK/FK 라이브러리(헤더 + 정적 라이브러리), 노드 없음. 2026-11-11: 목표 보정 `TargetProjector`(`reachability.hpp`)와 매개변수 읽기 도우미(`ros_params.hpp`, header-only, rclcpp 쓰는 패키지만) | 링크 길이: `ros2_ws/src/armpi_bringup/config/armpi.yaml`, 관절 기준·범위: 하드웨어 프로필. 보정 매개변수 `arm.target_policy`·`arm.nearest.*`(armpi.yaml `/**`, 수신기·웹 조종기·제어기 공통) |
 | `armpi_vr_bridge` | Protocol v3 UDP 수신기(5001) + 검색 응답(5002) 노드 | `docs/01_PROTOCOL_V3_SPEC.md` 구현 |
 | `armpi_control` | 제어기: 비상정지 latch, 2차 watchdog, 차체 cmd_vel → 바퀴, 팔 목표 보간 → 관절 명령, 상태 발행 | |
 | `armpi_hardware` | 하드웨어 드라이버(버스 서보 직렬, 확장보드 모터·부저·LED·배터리). `mock:=true`면 가짜 하드웨어 | 장치 설정: `armpi.yaml`(공통)과 하드웨어 프로필(로봇마다 다른 값, `config/hardware_profile.template.yaml`) |

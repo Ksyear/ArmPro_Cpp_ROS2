@@ -292,6 +292,52 @@ TEST(ArmController, IkFailureDuringInterpolationHoldsLastValid) {
   EXPECT_LT(dist(f.arm->reported_pose(), c), 0.003);
 }
 
+TEST(ArmController, NearestPolicyContinuesThroughBlockedInterpolation) {
+  // 위 시험과 같은 a → b(사이 직선이 pitch 0 으로는 안 풀림). nearest 정책이면 pitch 를 바꿔 지나가 b 위치에 도착한다.
+  // b 에서 pitch 0.02–0.10 rad 은 팔꿈치 한계라 pitch 0 까지는 못 넘어간다(시험용 프로필 값으로 미리 계산).
+  // 그때는 떨지 않고 가장 가까운 자세에서 멈춰야 한다.
+  ArmConfig cfg = default_cfg();
+  cfg.target_policy = ak::TargetPolicy::kNearest;
+  Fixture f(cfg);
+  std::string m;
+  f.arm->home(f.t, &m);
+  f.t += 1.6;
+  f.arm->tick(f.t, 0.02, false);
+  ak::ArmKinematics kin(cfg.kinematics);
+  const ArmPose a{0.26, 0.0, 0.05, 0.0, 0.0}, b{0.26, 0.0, 0.08, 0.0, 0.7};
+  const auto ra = kin.inverse(ak::Pose{a.x, a.y, a.z, a.pitch});
+  ASSERT_EQ(ra.status, ak::IkStatus::kOk);
+  ASSERT_NE(kin.inverse(ak::Pose{a.x, a.y, 0.065, a.pitch}).status, ak::IkStatus::kOk);
+  ASSERT_TRUE(f.arm->joint_debug({"joint1", "joint2", "joint3", "joint4"},
+                                 {ra.joints.j1, ra.joints.j2, ra.joints.j3, ra.joints.j4}, f.t, &m)) << m;
+  f.t += 5.0;
+  f.arm->tick(f.t, 0.02, false);
+  ASSERT_EQ(f.arm->on_target(true, b, f.t, false), TargetResult::kAccepted);
+  bool ever_blocked = false;
+  for (int k = 0; k < 150; ++k) {
+    f.arm->on_target(true, b, f.t, false);
+    f.run(1);
+    ever_blocked |= f.arm->ik_blocked();
+    // 보정한 자세도 항상 상자 안·IK 해 있음
+    const ArmPose p = f.arm->reported_pose();
+    ASSERT_TRUE(ak::inside(cfg.workspace, ak::Pose{p.x, p.y, p.z, p.pitch})) << k;
+  }
+  (void)ever_blocked;
+  EXPECT_LT(dist(f.arm->reported_pose(), b), 0.003);              // 위치는 도착
+  EXPECT_LT(std::fabs(f.arm->reported_pose().pitch - b.pitch), 0.15);  // pitch 는 닿는 가장 가까운 값(약 0.12)
+  EXPECT_NEAR(f.arm->reported_pose().gripper, b.gripper, 0.02);
+  // 멈춘 뒤 서보 명령이 더 바뀌지 않는다(떨림 없음)
+  const auto settled = f.arm->commanded_servo();
+  for (int k = 0; k < 50; ++k) {
+    f.arm->on_target(true, b, f.t, false);
+    f.run(1);
+    ASSERT_EQ(f.arm->commanded_servo(), settled) << k;
+  }
+  bool noted = false;
+  for (const auto& e : f.arm->take_events()) noted |= e.text.find("보간 경로 보정") != std::string::npos;
+  EXPECT_TRUE(noted);
+}
+
 TEST(ArmController, JointSpeedLimitSmoothsLargeIkJumps) {
   ArmConfig cfg = default_cfg();
   cfg.max_joint_speed_rad_s = 2.0;

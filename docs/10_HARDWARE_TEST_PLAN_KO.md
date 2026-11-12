@@ -133,8 +133,9 @@ python3 ~/servo_read_diag.py --turnaround-us 2000      # S3처럼 타이밍을 �
 | A2 | 기본 자세의 손끝 위치를 잰다 | 계산값 [계산]: x 0.1047 m, y 0, z 0.0753 m, pitch −1.0263 rad(−58.8°). 원점 `armpi_arm_base`는 어깨 관절축에서 0.064605 m 아래, 베이스 회전축 위의 점이다. 손끝은 어깨 축보다 약 0.011 m 높고 베이스 회전축에서 약 0.105 m 앞 | 실측값과 차이. 원점의 실제 위치는 [미확인] |
 | A3 | 관절 하나씩 작게: `ros2 topic pub --once /armpi/arm/joint_debug sensor_msgs/msg/JointState "{name: [joint1], position: [0.1]}"` (joint2·3·4·5도 같은 방법, ±0.1 rad ≈ ±5.7°) | 기대 방향은 하드웨어 프로필의 관절 기준(`arm.kinematics.j*_sign/offset`)과 방향(`arm.joint_directions`)으로 미리 계산해 적어 둔다 | 관절별 실제 방향. 하나라도 반대면 IK 결과가 틀린다 → 중단 |
 | A4 | 그리퍼 끝점: `r_joint`를 프로필 열림값(`arm.gripper.open_value`)에 해당하는 각도 → 닫힘값(`close_value`)에 해당하는 각도로(각도 = 방향·(서보값 − 500)·0.24°) | 열림·닫힘이 끝까지 가고, 닫힘에서 서보가 계속 힘을 쓰는 소리(윙윙)·발열이 없다. **손가락을 넣지 않는다** | 실제 끝점 서보값. 허용 범위는 프로필 `arm.gripper.servo_min/max` |
-| A5 | 작업 공간·IK 거부: Mac 조종기에서 팔 조종을 켜고, 작업 공간 밖(예 x 0.40) 숫자 입력 | `workspace_limit` 표시, 팔은 움직이지 않는다 | 화면 |
-| A6 | 도달 불가 목표(예 x 0.28, z 0.30, pitch 0) | `ik_unreachable` 표시, 팔은 그대로 | 화면 |
+| A5 | 작업 공간 밖 목표: 휴대폰 앱(또는 웹 조종기)에서 팔 조종을 켜고 작업 공간 밖(예 x 0.40) 입력. 2026-11-11부터 로봇 기본 `arm.target_policy: nearest` | 거부 표시 없이 손끝이 상자 면(x 0.32) 쪽까지만 움직이고 멈춘다. 반대 버튼을 누르면 바로 돌아온다(목표가 앞서 나가지 않음). 팔이 차체·바퀴·카메라에 닿지 않는다 | 영상·`/armpi_vr_bridge/state`의 `arm_target`·`packets.arm_adjust` |
+| A6 | 도달 불가 목표(예 x 0.28, z 0.30, pitch 0), 그리퍼 닫기와 함께 | 가까운 닿는 자세에서 멈추고 그리퍼는 닫힌다. 떨림(같은 자리에서 손목이 오가는 움직임)이 없다 | 영상. 수신기 로그 "팔 목표 보정" |
+| A6r | (선택) `arm.target_policy: "reject"`로 바꾼 뒤 A5·A6 | `workspace_limit`·`ik_unreachable` 표시, 팔은 그대로 | 화면. 끝나면 `nearest`로 되돌림 |
 | A7 | 작은 IK 이동: 팔 조종 켜기 → I 키를 0.2 s | 손끝이 앞으로 약 3 cm 곧게 움직인다(키 속도 0.15 m/s) | 실측 이동량 |
 | A8 | 토크 유지: 팔을 기본 자세가 아닌 곳에 둔 채 (1) Space 비상정지, (2) Mac 조종기 강제 종료, (3) `sudo systemctl stop armpi.service` | 세 경우 모두 팔이 **처지지 않는다** | 영상. (3)은 서보가 마지막 명령을 유지하는지 [추정] |
 | A9 | 손끝 정확도: 모눈종이를 깔고 목표 5곳을 숫자로 입력(예: A2 자세 근처, x ±3 cm, y ±3 cm). 곳마다 5회 | 기준은 첫 결과 뒤 정함 | 목표·실측 x/y/z, 반복 차이. 그리퍼 끝점의 실제 위치 정의는 [미확인] |

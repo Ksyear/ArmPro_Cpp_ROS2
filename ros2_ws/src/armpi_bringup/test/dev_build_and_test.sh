@@ -187,8 +187,14 @@ PY
     mkdir -p /results/e2e_gateway_check
     setsid ros2 launch armpi_bringup armpi_mock.launch.py rosbridge:=false > /results/e2e_gateway_check/mock_stack.log 2>&1 &
     STACKPID=$!
-    setsid ros2 run armpi_web_gateway armpi_web_gateway_node --ros-args -p http_bind:=127.0.0.1 -p http_port:=18765 \
-      -p session:=always > /results/e2e_gateway_check/gateway_node.log 2>&1 &
+    # 실제 로봇(deploy/systemd/armpi-web.service)처럼 armpi.yaml + 하드웨어 프로필(여기서는 시험용)을 준다 → 팔 버튼 목표 보정 켜짐.
+    # 시험용 값은 노드 이름 구역 YAML 로 마지막에 덮어쓴다(-p 는 armpi.yaml 의 armpi_web_gateway 구역보다 약하다).
+    CFGD=$(ros2 pkg prefix armpi_bringup)/share/armpi_bringup/config
+    printf "%s\n" "armpi_web_gateway:" "  ros__parameters:" "    robot: 127.0.0.1" "    http_bind: 127.0.0.1" \
+      "    http_port: 18765" "    session: always" > /results/e2e_gateway_check/gateway_test_override.yaml
+    setsid ros2 run armpi_web_gateway armpi_web_gateway_node --ros-args --params-file "$CFGD/armpi.yaml" \
+      --params-file "$CFGD/test_hardware_profile.yaml" --params-file /results/e2e_gateway_check/gateway_test_override.yaml \
+      > /results/e2e_gateway_check/gateway_node.log 2>&1 &
     GWPID=$!
     sleep 7
     timeout 120 python3 -B /mac/test/e2e_mac_controller_check.py --http 127.0.0.1:18765 --camera "" \

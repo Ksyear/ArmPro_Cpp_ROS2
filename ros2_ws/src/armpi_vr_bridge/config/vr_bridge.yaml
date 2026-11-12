@@ -35,6 +35,23 @@ armpi_vr_bridge:
     arm.workspace.z_min: -0.08
     arm.workspace.z_max: 0.32
 
+    # ── 닿을 수 없는 팔 목표의 처리 (armpi_vr_bridge·armpi_web_gateway·armpi_control 이 같은 값을 쓴다) ──
+    # "nearest": 거부하지 않고 닿을 수 있는 가장 가까운 자세로 받는다(armpi_kinematics/reachability.hpp).
+    #   ① 상자 밖 위치 → 상자 면으로 ② 요청 pitch 로 안 풀리면 가까운 pitch ③ 그래도 안 되면 마지막 목표 쪽으로 당김.
+    #   작업 공간 상자·관절 범위·손목 높이·팔꿈치 굽힘 제한은 그대로다(결과는 항상 상자 안, IK 해 있음).
+    #   그리퍼는 위치가 보정돼도 그대로 반영한다. ACK 는 accepted/ok(형식 변화 없음).
+    #   근거(2026-11-11 계산, 이 로봇 프로필): 상자 안 격자 9,261점 중 pitch 를 고정하면 IK 가 풀리는 점이 6–33 %
+    #   (손끝 아래 −90° 는 5.8 %), pitch 를 ±π/2 안에서 바꿀 수 있으면 69–85 %.
+    # "reject": 규격 v3 원래 동작(workspace_limit·ik_unreachable 로 거부, 팔은 마지막 목표에 멈춤).
+    # 사용자 결정 2026-11-11(VR 조종 때 팔이 자꾸 멈춤), 실기 확인 전.
+    arm.target_policy: "nearest"
+    arm.nearest.max_pitch_change_rad: 1.5707963267948966  # 요청 pitch 에서 최대 ±π/2 까지 바꿈. 0 = pitch 를 바꾸지 않음
+    arm.nearest.pitch_step_rad: 0.017453292519943295      # 찾는 간격 1°
+    arm.nearest.pitch_min_rad: -1.5707963267948966        # 바꾼 pitch 의 범위 −90°(손끝 아래) ..
+    arm.nearest.pitch_max_rad: 0.5235987755982988         # .. +30°
+    arm.nearest.allow_position_change: true               # ③ 단계(위치 당김) 사용
+    arm.nearest.bisect_iterations: 14
+
     # 기구학 (armpi_kinematics::Params 와 같은 이름). IK 해가 없으면 ik_unreachable.
     # 이 파일은 수신기 단독 실행(vr_bridge.launch.py, 제어기 없는 시험)용이다. 관절 기준·범위는 시험용 값
     # (armpi_bringup config/test_hardware_profile.yaml 과 같음, 실제 로봇 값 아님). 로봇에서는 armpi.launch.py 가

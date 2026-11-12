@@ -37,6 +37,10 @@ struct ClientOptions {
   std::function<double()> clock;                    // 단조 시계(초). 비우면 steady_clock
   std::function<void(const std::string&)> log;      // 비우면 기록 안 함
   std::function<std::string()> new_uuid;            // 비우면 무작위 UUIDv4
+  // 팔 목표를 바꿀 때마다(set/move) 거친다. wanted = 새로 원하는 목표, current = 지금 목표.
+  // 로봇과 같은 보정 규칙으로 닿는 자세에 맞춰 두면(armpi_web_gateway) 버튼으로 움직인 목표가 닿지 않는 곳으로
+  // 앞서 나가지 않는다. 비우면 그대로.
+  std::function<ArmTarget(const ArmTarget& wanted, const ArmTarget& current)> arm_target_filter;
 };
 
 // 채널 하나(차체 또는 팔)의 클라이언트 쪽 무장 상태

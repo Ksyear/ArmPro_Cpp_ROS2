@@ -5,12 +5,14 @@
 상태기계는 이전 프로젝트 Protocol v2 의 세션 규칙(V2Session)을 바탕으로 하며, v3 변경(채널 2개, strafe,
 arm_command, workspace_limit/ik_unreachable, 채널별 watchdog, 세션 1개)을 더했다.
 팔 IK 판정은 ``ros2_ws/src/armpi_kinematics/src/arm_kinematics.cpp`` 를 같은 식으로 옮겼다.
+닿을 수 없는 팔 목표의 보정(기본 nearest, ``--arm-policy reject`` 로 끔)은 ``reachability.cpp`` 를 같은 식으로 옮겼다.
 
 제공하는 것
 - UDP 제어 수신(기본 5001): 엄격한 파서, 소유권·sequence·lease·retire·비상정지 latch, 차체/팔 채널별 상태와 watchdog
 - UDP 검색 응답(기본 5002): ``ARMPI_DISCOVER/1|nonce`` → ``ARMPI_HERE/1|nonce|id|name|port|3`` (초당 최대 20회)
 - 간단한 시뮬레이션: 차체 속도·위치 적분, 팔 손끝 목표 보간(직선 속도·pitch 변화율·그리퍼 속도 제한)
-- 가짜 rosbridge(WebSocket, 기본 9090): /armpi/status(2 Hz+변화), /armpi/battery(1 Hz), /joint_states(20 Hz) 발행,
+- 가짜 rosbridge(WebSocket, 기본 9090): /armpi/status(2 Hz+변화), /armpi/battery(1 Hz), /joint_states(20 Hz),
+  /armpi/arm/target(팔 active 동안 20 Hz) 발행,
   /armpi/emergency_stop·/armpi/reset_estop·/armpi/arm/home 서비스, /armpi/arm/joint_debug 구독
 - 가짜 카메라(HTTP, 기본 8080): /stream → PNG 프레임 multipart 스트림(실제 ros_compressed JPEG 아님)
 
@@ -75,6 +77,12 @@ DEFAULT_CONFIG = {
             "joint_max": [2.0943951023931953, 1.4, 2.0943951023931953, 1.9],
         },
         "home": {"x": 0.1047, "y": 0.0, "z": 0.0753, "pitch": -1.0263, "gripper": 0.0},  # 기본 자세 손끝 목표(armpi.yaml 과 같음)
+        # 닿을 수 없는 arm_command 처리(armpi.yaml arm.target_policy·arm.nearest.* 와 같은 값).
+        # "nearest" = 가장 가까운 닿는 자세로 받음(로봇 기본, 2026-11-11), "reject" = 규격 v3 원래 동작.
+        "target_policy": "nearest",
+        "nearest": {"max_pitch_change_rad": math.pi / 2, "pitch_step_rad": math.pi / 180,
+                    "pitch_min_rad": -math.pi / 2, "pitch_max_rad": math.pi / 6,
+                    "allow_position_change": True, "bisect_iterations": 14},
     },
     "battery_v": 7.6,
 }
@@ -144,6 +152,84 @@ class ArmKinematics:
 def inside_workspace(w, x, y, z):
     """C++ ``inside()`` 와 같이 경계 포함."""
     return w["x_min"] <= x <= w["x_max"] and w["y_min"] <= y <= w["y_max"] and w["z_min"] <= z <= w["z_max"]
+
+
+class TargetProjector:
+    """C++ ``armpi_kinematics::TargetProjector`` 와 같은 규칙(reachability.cpp 이식).
+
+    닿을 수 없는 목표 → ① 상자 면으로 자름 ② 요청에 가장 가까운 pitch(±max_pitch_change, [pitch_min, pitch_max] 안,
+    같은 거리면 anchor pitch 쪽 먼저) ③ anchor → 목표 직선에서 닿는 가장 먼 점(이분 탐색). 결과는 항상 상자 안·IK 해 있음.
+    """
+
+    BOX, PITCH, POSITION = 1, 2, 4
+
+    def __init__(self, kin, workspace, opt):
+        self.kin, self.ws, self.o = kin, dict(workspace), dict(opt)
+
+    @staticmethod
+    def adjust_name(flags):
+        names = [n for bit, n in ((1, "box"), (2, "pitch"), (4, "position")) if flags & bit]
+        return "+".join(names) if names else "none"
+
+    def _ik_ok(self, x, y, z, pitch):
+        return self.kin.inverse(x, y, z, pitch)[0] == ArmKinematics.OK
+
+    def reachable(self, x, y, z, pitch):
+        return (all(math.isfinite(v) for v in (x, y, z, pitch)) and inside_workspace(self.ws, x, y, z)
+                and self._ik_ok(x, y, z, pitch))
+
+    def _find_pitch(self, x, y, z, want, prefer=None, extra=None):
+        if self._ik_ok(x, y, z, want):
+            return want
+        cap, step = self.o["max_pitch_change_rad"], self.o["pitch_step_rad"]
+        lo_b, hi_b = self.o["pitch_min_rad"], self.o["pitch_max_rad"]
+        if cap > 0:
+            n = int(math.floor(cap / step + 1e-9))
+            ds = [i * step for i in range(1, n + 1)]
+            if abs(cap - n * step) >= 1e-9:
+                ds.append(cap)
+            for d in ds:
+                first, second = want - d, want + d
+                if prefer is not None and abs(second - prefer) < abs(first - prefer):
+                    first, second = second, first
+                for c in (first, second):
+                    if lo_b - 1e-9 <= c <= hi_b + 1e-9 and self._ik_ok(x, y, z, c):
+                        return c
+        if extra is not None and math.isfinite(extra) and self._ik_ok(x, y, z, extra):
+            return extra
+        return None
+
+    def project(self, x, y, z, pitch, anchor=None):
+        """(ok, (x, y, z, pitch), flags). anchor = (x, y, z, pitch) 또는 None."""
+        if not all(math.isfinite(v) for v in (x, y, z, pitch)) or not self.kin.valid():
+            return False, None, 0
+        w = self.ws
+        px = min(max(x, w["x_min"]), w["x_max"])
+        py = min(max(y, w["y_min"]), w["y_max"])
+        pz = min(max(z, w["z_min"]), w["z_max"])
+        flags = self.BOX if (px, py, pz) != (x, y, z) else 0
+        if self._ik_ok(px, py, pz, pitch):
+            return True, (px, py, pz, pitch), flags
+        prefer = anchor[3] if anchor else None
+        pc = self._find_pitch(px, py, pz, pitch, prefer)
+        if pc is not None:
+            return True, (px, py, pz, pc), flags | self.PITCH
+        if not self.o["allow_position_change"] or anchor is None or not self.reachable(*anchor):
+            return False, None, flags
+        ax, ay, az, ap = anchor
+        best, lo, hi = anchor, 0.0, 1.0
+        for _ in range(int(self.o["bisect_iterations"])):
+            s = 0.5 * (lo + hi)
+            qx, qy, qz = ax + s * (px - ax), ay + s * (py - ay), az + s * (pz - az)
+            pc = self._find_pitch(qx, qy, qz, pitch, prefer, ap)
+            if pc is not None:
+                lo, best = s, (qx, qy, qz, pc)
+            else:
+                hi = s
+        flags |= self.POSITION
+        if best[3] != pitch:
+            flags |= self.PITCH
+        return True, best, flags
 
 
 # ───────────────────────── 엄격한 파서 ─────────────────────────
@@ -362,6 +448,11 @@ class V3Session:
     def __init__(self, cfg, kin, base_sim, arm_sim, log):
         self.cfg = cfg
         self.kin = kin
+        self.projector = TargetProjector(kin, cfg["arm"]["workspace"], cfg["arm"].get("nearest", {
+            "max_pitch_change_rad": math.pi / 2, "pitch_step_rad": math.pi / 180, "pitch_min_rad": -math.pi / 2,
+            "pitch_max_rad": math.pi / 6, "allow_position_change": True, "bisect_iterations": 14}))
+        self.arm_goal = None   # 마지막으로 받은 팔 목표(x, y, z, pitch). 세션이 바뀌어도 기준으로만 쓴다(C++ 와 같음)
+        self.arm_adjust = {}   # nearest 정책에서 바꿔 받은 수(방식별)
         self.base_sim = base_sim
         self.arm_sim = arm_sim
         self.log = log
@@ -594,17 +685,31 @@ class V3Session:
                                  pkt.turn * c["max_wz_rad_s"])
             return self._ack(pkt.client_id, pkt.sequence, True, "ok", ch), ([] if was else ["차체 활성"])
 
-        # 팔: 작업 공간 → IK 순서로 판정. 거부는 목표·watchdog 을 바꾸지 않는다.
-        ws = self.cfg["arm"]["workspace"]
-        if not inside_workspace(ws, pkt.x, pkt.y, pkt.z):
-            return self._ack(pkt.client_id, pkt.sequence, False, "workspace_limit", ch), []
-        status, _ = self.kin.inverse(pkt.x, pkt.y, pkt.z, pkt.pitch)
-        if status != ArmKinematics.OK:
-            return self._ack(pkt.client_id, pkt.sequence, False, "ik_unreachable", ch), []
+        # 팔: 거부는 목표·watchdog 을 바꾸지 않는다.
+        x, y, z, pitch = pkt.x, pkt.y, pkt.z, pkt.pitch
+        if self.cfg["arm"].get("target_policy", "reject") == "nearest":
+            # 로봇과 같은 보정(안전 범위는 그대로). 기준은 마지막으로 받은 목표. 그리퍼는 그대로 반영.
+            ok, pose, flags = self.projector.project(x, y, z, pitch, self.arm_goal)
+            if not ok:
+                self.detail = "가까운 자세도 없음(기준 목표 없음)"
+                return self._ack(pkt.client_id, pkt.sequence, False, "ik_unreachable", ch), []
+            x, y, z, pitch = pose
+            if flags:
+                name = TargetProjector.adjust_name(flags)
+                self.arm_adjust[name] = self.arm_adjust.get(name, 0) + 1
+        else:
+            # 작업 공간 → IK 순서로 판정.
+            ws = self.cfg["arm"]["workspace"]
+            if not inside_workspace(ws, x, y, z):
+                return self._ack(pkt.client_id, pkt.sequence, False, "workspace_limit", ch), []
+            status, _ = self.kin.inverse(x, y, z, pitch)
+            if status != ArmKinematics.OK:
+                return self._ack(pkt.client_id, pkt.sequence, False, "ik_unreachable", ch), []
         was = ch.active
         ch.active = True
         ch.last_rx = now
-        self.arm_sim.target = {"x": pkt.x, "y": pkt.y, "z": pkt.z, "pitch": pkt.pitch, "gripper": pkt.gripper}
+        self.arm_goal = (x, y, z, pitch)
+        self.arm_sim.target = {"x": x, "y": y, "z": z, "pitch": pitch, "gripper": pkt.gripper}
         return self._ack(pkt.client_id, pkt.sequence, True, "ok", ch), ([] if was else ["팔 활성"])
 
     # ── 내부 ──
@@ -1037,10 +1142,12 @@ class MockRobot:
             rx = {k[3:]: v for k, v in s.counters.items() if k.startswith("rx_")}
             vx, vy, wz = self.base_sim.cmd
             c = dict(self.arm_sim.current)
+            adjust = dict(s.arm_adjust)
         if not self._packets:
             return
-        self.log("통계: 수신 %d %s, 사유 %s | 차체 vx=%.3f vy=%.3f wz=%.3f | 팔 현재 x=%.3f y=%.3f z=%.3f p=%.3f g=%.2f"
-                 % (self._packets, rx, reasons, vx, vy, wz, c["x"], c["y"], c["z"], c["pitch"], c["gripper"]))
+        self.log("통계: 수신 %d %s, 사유 %s, 팔 목표 보정 %s | 차체 vx=%.3f vy=%.3f wz=%.3f | 팔 현재 x=%.3f y=%.3f z=%.3f p=%.3f g=%.2f"
+                 % (self._packets, rx, reasons, adjust or "-", vx, vy, wz, c["x"], c["y"], c["z"], c["pitch"],
+                    c["gripper"]))
 
     # ── 상태 (rosbridge /armpi/status) ──
 
@@ -1191,6 +1298,7 @@ class MockRobot:
 
     def _ws_publish_loop(self):
         last_status = last_batt = 0.0
+        self._arm_target_was_active = False
         while self.running.is_set():
             time.sleep(0.05)
             conns = [c for c in self.ws_conns if c.alive]
@@ -1220,6 +1328,20 @@ class MockRobot:
                 for c in conns:
                     if "/armpi/battery" in c.subs:
                         c.send_json(body)
+            # /armpi/arm/target: 실제 수신기처럼 팔 채널이 active 인 동안 20 Hz, 비활성으로 바뀔 때 active:false 한 번
+            if any("/armpi/arm/target" in c.subs for c in conns):
+                with self.lock:
+                    arm_active = bool(self.session.arm.active)
+                    tgt = dict(self.arm_sim.target)
+                if arm_active or self._arm_target_was_active:
+                    body = {"op": "publish", "topic": "/armpi/arm/target",
+                            "msg": {"header": {"stamp": stamp, "frame_id": "armpi_arm_base"}, "active": arm_active,
+                                    "x": tgt["x"], "y": tgt["y"], "z": tgt["z"], "pitch": tgt["pitch"],
+                                    "gripper": tgt["gripper"]}}
+                    for c in conns:
+                        if "/armpi/arm/target" in c.subs:
+                            c.send_json(body)
+                self._arm_target_was_active = arm_active
             if any("/joint_states" in c.subs for c in conns):
                 with self.lock:
                     j = list(self.joints)
@@ -1343,6 +1465,10 @@ def build_config(args):
     if args.home:
         h = _floats(args.home, 5)
         cfg["arm"]["home"] = dict(zip(("x", "y", "z", "pitch", "gripper"), h))
+    if args.arm_policy:
+        cfg["arm"]["target_policy"] = args.arm_policy
+    if cfg["arm"].get("target_policy", "reject") not in ("nearest", "reject"):
+        raise SystemExit("arm.target_policy 는 nearest 또는 reject")
     cfg["control_state"] = args.control_state
     if not (0 < cfg["base_watchdog_s"] < cfg["lease_s"] and 0 < cfg["arm_watchdog_s"] < cfg["lease_s"]):
         raise SystemExit("lease 는 두 watchdog 보다 길어야 합니다")
@@ -1369,6 +1495,8 @@ def main(argv=None):
     ap.add_argument("--workspace", help="x_min,x_max,y_min,y_max,z_min,z_max (m)")
     ap.add_argument("--links", help="base_height,upper_arm,forearm,hand (m)")
     ap.add_argument("--home", help="x,y,z,pitch,gripper")
+    ap.add_argument("--arm-policy", choices=["nearest", "reject"],
+                    help="닿을 수 없는 팔 목표 처리(기본 nearest = 로봇 armpi.yaml 과 같음, reject = 규격 v3 원래 동작)")
     ap.add_argument("--control-state", default="ok", choices=["ok", "missing", "udp_blocked", "fault"],
                     help="제어기(armpi_control) 상태 흉내: ok=허용, missing=상태 미수신, udp_blocked, fault")
     ap.add_argument("--stats-period", type=float, default=5.0)

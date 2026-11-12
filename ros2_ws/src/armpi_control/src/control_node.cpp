@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "armpi_common/json.hpp"
+#include "armpi_kinematics/ros_params.hpp"
 #include "control_node_detail.hpp"
 
 namespace armpi_control {
@@ -108,6 +109,12 @@ void ControlNode::load_parameters() {
   k.min_elbow_bend_rad = declare_parameter<double>(kp + "min_elbow_bend_rad", 0.05);
 
   load_hardware_profile();
+  // 보간 경로가 막혔을 때의 처리(armpi_vr_bridge·armpi_web_gateway 와 같은 arm.target_policy·arm.nearest.*)
+  {
+    const auto tp = armpi_kinematics::declare_target_params(*this);
+    arm_cfg_.target_policy = tp.policy;
+    arm_cfg_.reach = tp.reach;
+  }
 
   status_rate_hz_ = declare_parameter<double>("status.rate_hz", 2.0);
   joint_states_rate_hz_ = declare_parameter<double>("joint_states.rate_hz", 20.0);
@@ -396,13 +403,13 @@ ControlNode::ControlNode(const rclcpp::NodeOptions& options) : rclcpp::Node("arm
   RCLCPP_INFO(get_logger(),
               "armpi_control 시작 (%s): 차체 |vx|≤%.2f |vy|≤%.2f m/s |wz|≤%.2f rad/s, 가속 %.2f m/s²·%.1f rad/s², "
               "watchdog %.2fs, stamp 최대 %.2fs, angular_sign %+.0f | 팔 %.2f m/s, %.1f rad/s, 그리퍼 %.1f/s, "
-              "관절 %.1f rad/s, %d ms, 위치 피드백 %s",
+              "관절 %.1f rad/s, %d ms, 위치 피드백 %s, 경로 막힘 처리 %s",
               mock_ ? "가짜 하드웨어" : "실제 하드웨어", chassis_cfg_.max_vx_m_s, chassis_cfg_.max_vy_m_s,
               chassis_cfg_.max_wz_rad_s, chassis_cfg_.max_linear_accel_m_s2, chassis_cfg_.max_angular_accel_rad_s2,
               chassis_cfg_.cmd_timeout_s, chassis_cfg_.max_cmd_age_s, chassis_cfg_.angular_sign,
               arm_cfg_.limits.max_linear_speed_m_s, arm_cfg_.limits.max_pitch_rate_rad_s,
               arm_cfg_.limits.max_gripper_rate_per_s, arm_cfg_.max_joint_speed_rad_s, arm_cfg_.command_duration_ms,
-              arm_cfg_.read_position ? "POS_READ" : "명령값");
+              arm_cfg_.read_position ? "POS_READ" : "명령값", armpi_kinematics::to_string(arm_cfg_.target_policy));
   run_boot_check();
   startup_beep();
   publish_control_state(true);

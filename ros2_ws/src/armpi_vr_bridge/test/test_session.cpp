@@ -697,3 +697,98 @@ TEST(SessionConfigValidation, RejectsBadValues) {
   EXPECT_THROW(Session(bad([](SessionConfig& c) { c.control_state_max_age_s = -1.0; })), std::invalid_argument);
   EXPECT_THROW(Session(bad([](SessionConfig& c) { c.retired_limit = 0; })), std::invalid_argument);
 }
+
+// ───────────── 팔 목표 보정(arm.target_policy: nearest) ─────────────
+// 안전 범위(상자·관절·손목 높이)는 그대로, 거부 대신 닿을 수 있는 가장 가까운 자세로 받는다.
+
+namespace {
+SessionConfig nearest_cfg() {
+  SessionConfig c = default_cfg();
+  c.arm_target_policy = armpi_kinematics::TargetPolicy::kNearest;
+  return c;
+}
+bool reachable(const SessionConfig& c, const ArmOutput& a) {
+  const armpi_kinematics::TargetProjector tp(c.kinematics, c.workspace, c.reach);
+  return tp.reachable(armpi_kinematics::Pose{a.x, a.y, a.z, a.pitch});
+}
+}  // namespace
+
+TEST(SessionArmNearest, OutsideWorkspaceIsClampedAndAccepted) {
+  const SessionConfig cfg = nearest_cfg();
+  H h(true, cfg);
+  h.arm_neutral();
+  ASSERT_TRUE(AckIs(h.arm(true, 0.15, 0.0, 0.05, -M_PI / 2, 0.2), true, Reason::kOk, ChannelState::kActive));
+  const auto r = h.arm(true, 0.15, 0.40, 0.05, -M_PI / 2, 0.2);  // y_max 0.25 초과
+  EXPECT_TRUE(AckIs(r, true, Reason::kOk, ChannelState::kActive));
+  EXPECT_TRUE(r.arm_accepted);
+  EXPECT_TRUE(r.arm_adjust & armpi_kinematics::kAdjustBox);
+  const ArmOutput a = h.s->arm_output();
+  EXPECT_LE(a.y, cfg.workspace.y_max);
+  EXPECT_GT(a.y, 0.0);  // 옆으로는 따라갔다
+  EXPECT_TRUE(reachable(cfg, a));
+}
+
+TEST(SessionArmNearest, UnreachableTargetStillMovesGripperAndKeepsChannelAlive) {
+  const SessionConfig cfg = nearest_cfg();
+  H h(true, cfg);
+  h.arm_neutral();
+  ASSERT_TRUE(AckIs(h.arm(true, 0.15, 0.0, 0.05), true, Reason::kOk));
+  // 상자 안이지만 어떤 자세로도 닿지 않는 점 + 그리퍼 닫기. 0.1 s 간격으로 1 s(팔 watchdog 0.4 s 보다 김)
+  for (int i = 0; i < 10; ++i) {
+    const auto r = h.arm(true, 0.30, 0.25, 0.35, 0.0, 1.0, 0.1);
+    ASSERT_TRUE(AckIs(r, true, Reason::kOk, ChannelState::kActive)) << i;
+    EXPECT_TRUE(r.arm_adjust & armpi_kinematics::kAdjustPosition);
+    EXPECT_TRUE(h.tick(0.0).empty());
+  }
+  const ArmOutput a = h.s->arm_output();
+  EXPECT_TRUE(a.active);
+  EXPECT_DOUBLE_EQ(a.gripper, 1.0);
+  EXPECT_TRUE(reachable(cfg, a));
+  EXPECT_GT(a.x, 0.15);  // 목표 쪽으로 당겨졌다
+}
+
+TEST(SessionArmNearest, ReachableTargetIsNotChanged) {
+  H h(true, nearest_cfg());
+  h.arm_neutral();
+  const auto r = h.arm(true, 0.15, 0.02, 0.05, -M_PI / 2, 0.3);
+  ASSERT_TRUE(AckIs(r, true, Reason::kOk));
+  EXPECT_EQ(r.arm_adjust, 0u);
+  const ArmOutput a = h.s->arm_output();
+  EXPECT_DOUBLE_EQ(a.x, 0.15);
+  EXPECT_DOUBLE_EQ(a.y, 0.02);
+  EXPECT_DOUBLE_EQ(a.z, 0.05);
+  EXPECT_DOUBLE_EQ(a.pitch, -M_PI / 2);
+}
+
+TEST(SessionArmNearest, FirstTargetWithoutAnchorRejectsWhenNothingFits) {
+  SessionConfig cfg = nearest_cfg();
+  cfg.reach.max_pitch_change_rad = 0.0;  // pitch 를 바꾸지 않음 → 기준 목표가 없으면 보정할 수 없다
+  H h(true, cfg);
+  h.arm_neutral();
+  const auto r = h.arm(true, 0.30, 0.25, 0.35, 0.0, 0.0);
+  EXPECT_TRUE(AckIs(r, false, Reason::kIkUnreachable, ChannelState::kIdle));
+  EXPECT_FALSE(h.s->arm_output().has_goal);
+}
+
+TEST(SessionArmNearest, EveryAcceptedGoalIsReachable) {
+  const SessionConfig cfg = nearest_cfg();
+  H h(true, cfg);
+  h.arm_neutral();
+  ASSERT_TRUE(AckIs(h.arm(true, 0.15, 0.0, 0.05), true, Reason::kOk));
+  uint64_t s = 7;
+  auto rnd = [&s](double lo, double hi) {
+    s = s * 6364136223846793005ULL + 1442695040888963407ULL;
+    return lo + (hi - lo) * static_cast<double>(s >> 11) / static_cast<double>(1ULL << 53);
+  };
+  for (int i = 0; i < 300; ++i) {
+    const auto r = h.arm(true, rnd(-0.2, 0.5), rnd(-0.5, 0.5), rnd(-0.2, 0.5), rnd(-M_PI, M_PI), rnd(0, 1), 0.02);
+    ASSERT_TRUE(AckIs(r, true, Reason::kOk)) << i;
+    ASSERT_TRUE(reachable(cfg, h.s->arm_output())) << i;
+  }
+}
+
+TEST(SessionArmNearest, InvalidReachOptionsRejectedAtConstruction) {
+  SessionConfig cfg = nearest_cfg();
+  cfg.reach.pitch_step_rad = 0.0;
+  EXPECT_THROW(Session{cfg}, std::invalid_argument);
+}

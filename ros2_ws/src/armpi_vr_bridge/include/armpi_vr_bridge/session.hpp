@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "armpi_kinematics/arm_kinematics.hpp"
+#include "armpi_kinematics/reachability.hpp"
 #include "armpi_vr_bridge/net.hpp"
 #include "armpi_vr_bridge/protocol.hpp"
 
@@ -61,6 +62,10 @@ struct SessionConfig {
   bool accept_estop_from_any_client{true};
   armpi_kinematics::Workspace workspace{};
   armpi_kinematics::Params kinematics{};
+  // 닿을 수 없는 arm_command 처리. kReject = 규격 v3 원래 동작(workspace_limit·ik_unreachable 거부, 라이브러리 기본값),
+  // kNearest = 닿을 수 있는 가장 가까운 자세로 보정해서 수락(armpi_kinematics/reachability.hpp). 로봇은 armpi.yaml 이 정한다.
+  armpi_kinematics::TargetPolicy arm_target_policy{armpi_kinematics::TargetPolicy::kReject};
+  armpi_kinematics::ReachOptions reach{};
 
   // 잘못된 값이면 std::invalid_argument (한국어 설명)
   void validate() const;
@@ -71,6 +76,7 @@ struct HandleResult {
   Channel channel{Channel::kBase};
   std::optional<bool> estop_change;  // true = latch 요청, false = 해제 요청 (/armpi/estop_request)
   bool arm_accepted{false};          // 수락된 arm_command → ArmTarget 1회 발행
+  unsigned arm_adjust{0};            // nearest 정책에서 수락한 팔 목표를 바꾼 방식(armpi_kinematics::ReachAdjust 비트)
   std::vector<std::string> events;   // 상태 전이(로그용)
   std::string detail;                // 거부 사유 설명(로그용)
 };
@@ -167,6 +173,7 @@ class Session {
 
   SessionConfig cfg_;
   armpi_kinematics::ArmKinematics kin_;
+  armpi_kinematics::TargetProjector projector_;
 
   std::optional<std::string> owner_;
   std::optional<Endpoint> owner_addr_;

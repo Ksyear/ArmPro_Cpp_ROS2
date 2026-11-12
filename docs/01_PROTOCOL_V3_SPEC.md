@@ -55,7 +55,10 @@ v2에서 바뀌지 않은 규칙은 v2 문서를 그대로 따른다. 이 문서
 - 팔 중립 = `control_active:false`.
 - `armpi_arm_base` 원점과 IK 판정은 로봇 쪽 기구학 라이브러리가 정한다(링크 길이: `ros2_ws/src/armpi_bringup/config/armpi.yaml`, 관절 기준·범위: 하드웨어 프로필 `hardware_profile.yaml`).
 - 로봇은 목표를 **즉시 점프시키지 않는다.** 목표까지 설정 속도(`arm.max_linear_speed_m_s`, `arm.max_pitch_rate_rad_s`, `arm.max_gripper_rate_per_s`)로 보간한다.
-- 작업 공간 밖 → `workspace_limit`, IK 해 없음 → `ik_unreachable`. 둘 다 거부 시 목표를 바꾸지 않는다(이전 목표 유지). **거부도 팔 watchdog을 갱신하지 않는다.**
+- 닿을 수 없는 목표의 처리는 로봇 설정 `arm.target_policy`가 정한다(메시지·ACK 형식은 두 경우 모두 같다). **[2026-11-11 추가]**
+  - `reject`(규격 v3 원래 동작): 작업 공간 밖 → `workspace_limit`, IK 해 없음 → `ik_unreachable`. 둘 다 거부 시 목표를 바꾸지 않는다(이전 목표 유지). **거부도 팔 watchdog을 갱신하지 않는다.**
+  - `nearest`(로봇 기본, 2026-11-11부터): 거부하지 않고 **닿을 수 있는 가장 가까운 자세**로 바꿔 수락한다(`accepted:true`, `reason:"ok"`, watchdog 갱신). 순서: ① 위치를 작업 공간 상자 안으로 자름 ② 요청 pitch로 IK가 안 되면 요청에 가장 가까운 pitch(최대 ±`arm.nearest.max_pitch_change_rad`, 범위 `arm.nearest.pitch_min_rad`..`pitch_max_rad`) ③ 그래도 안 되면 마지막으로 받은 목표 쪽으로 위치를 당김. 그리퍼 값은 그대로 반영한다. 기준이 될 이전 목표가 없고 ②로도 안 되면 `ik_unreachable`로 거부한다.
+  - 두 경우 모두 작업 공간 상자·관절 범위·손목 높이·팔꿈치 굽힘 제한은 그대로다. 로봇이 실제로 쓴 목표는 `/armpi/arm/target`(ROS 2)과 `/armpi_vr_bridge/state`의 `arm_target`에서 볼 수 있고, 보정 횟수는 같은 상태의 `packets.arm_adjust`에 방식별로 쌓인다.
 
 ### 2.3 `event` (공통 4필드)
 
