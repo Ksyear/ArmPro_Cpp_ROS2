@@ -7,7 +7,7 @@
 
 namespace armpi_vr_bridge {
 
-void RxStats::observe(double now, std::size_t size, const Ack& ack) {
+void RxStats::observe(double now, std::size_t size, const Ack& ack, unsigned arm_adjust) {
   ++packets_;
   bytes_ += size;
   if (last_rx_) {
@@ -17,6 +17,7 @@ void RxStats::observe(double now, std::size_t size, const Ack& ack) {
   last_rx_ = now;
   ++reasons_[to_string(ack.reason)];
   if (ack.accepted) ++accepted_;
+  if (ack.accepted && arm_adjust != 0) ++arm_adjust_[armpi_kinematics::adjust_to_string(arm_adjust)];
   if (ack.client_id && ack.sequence >= 0) {
     const std::string& cid = *ack.client_id;
     auto it = last_seq_.find(cid);
@@ -47,6 +48,7 @@ RxSummary RxStats::summary(double now) const {
   s.bytes = bytes_;
   s.filtered = filtered_;
   s.reasons = reasons_;
+  s.arm_adjust = arm_adjust_;
   s.sequence_gaps = gaps_;
   s.estimated_lost = missing_;
   s.reordered_or_duplicate = reordered_;

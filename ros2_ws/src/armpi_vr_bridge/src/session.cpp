@@ -38,9 +38,14 @@ void SessionConfig::validate() const {
   need(w.x_min < w.x_max && w.y_min < w.y_max && w.z_min < w.z_max, "arm.workspace 는 min < max 여야 합니다");
   need(armpi_kinematics::ArmKinematics(kinematics).valid(),
        "arm.kinematics 가 올바르지 않습니다(링크 길이>0, sign≠0, joint_min<joint_max)");
+  const std::string reach_err = reach.validate();
+  need(reach_err.empty(), reach_err.c_str());
 }
 
-Session::Session(const SessionConfig& config) : cfg_(config), kin_(config.kinematics) { cfg_.validate(); }
+Session::Session(const SessionConfig& config)
+    : cfg_(config), kin_(config.kinematics), projector_(config.kinematics, config.workspace, config.reach) {
+  cfg_.validate();
+}
 
 // ── 조회 ──
 
@@ -333,26 +338,42 @@ HandleResult Session::apply_arm(const Packet& p, double now) {
   if (!gate_permitted_) {
     return reject(p.client_id, p.sequence, Reason::kNotOwner, Channel::kArm, blocked_reason_.value_or("차단"));
   }
-  const armpi_kinematics::Pose pose{p.x, p.y, p.z, p.pitch};
+  armpi_kinematics::Pose pose{p.x, p.y, p.z, p.pitch};
+  unsigned adjust = armpi_kinematics::kAdjustNone;
   // 거부는 목표를 바꾸지 않고 watchdog 도 갱신하지 않는다.
-  if (!armpi_kinematics::inside(cfg_.workspace, pose)) {
-    return reject(p.client_id, p.sequence, Reason::kWorkspaceLimit, Channel::kArm, "팔 목표가 작업 공간 밖");
-  }
-  const auto ik = kin_.inverse(pose);
-  if (ik.status != armpi_kinematics::IkStatus::kOk) {
-    return reject(p.client_id, p.sequence, Reason::kIkUnreachable, Channel::kArm,
-                  std::string("IK 해 없음: ") + armpi_kinematics::to_string(ik.status));
+  if (cfg_.arm_target_policy == armpi_kinematics::TargetPolicy::kNearest) {
+    // 안전 범위(상자·관절·손목 높이·팔꿈치)는 그대로, 닿을 수 있는 가장 가까운 자세로 받는다.
+    // 기준(anchor)은 마지막으로 받은 목표(항상 닿을 수 있음). 그리퍼는 그대로 반영한다.
+    const armpi_kinematics::Pose anchor{arm_.goal.x, arm_.goal.y, arm_.goal.z, arm_.goal.pitch};
+    const auto pr = projector_.project(pose, arm_.goal.has_goal ? &anchor : nullptr);
+    if (!pr.ok) {
+      return reject(p.client_id, p.sequence, Reason::kIkUnreachable, Channel::kArm,
+                    std::string("가까운 자세도 없음(기준 목표 없음): ") +
+                        armpi_kinematics::to_string(pr.requested_status));
+    }
+    pose = pr.pose;
+    adjust = pr.adjust;
+  } else {
+    if (!armpi_kinematics::inside(cfg_.workspace, pose)) {
+      return reject(p.client_id, p.sequence, Reason::kWorkspaceLimit, Channel::kArm, "팔 목표가 작업 공간 밖");
+    }
+    const auto ik = kin_.inverse(pose);
+    if (ik.status != armpi_kinematics::IkStatus::kOk) {
+      return reject(p.client_id, p.sequence, Reason::kIkUnreachable, Channel::kArm,
+                    std::string("IK 해 없음: ") + armpi_kinematics::to_string(ik.status));
+    }
   }
   arm_.active = true;
   arm_.goal.has_goal = true;
-  arm_.goal.x = p.x;
-  arm_.goal.y = p.y;
-  arm_.goal.z = p.z;
-  arm_.goal.pitch = p.pitch;
+  arm_.goal.x = pose.x;
+  arm_.goal.y = pose.y;
+  arm_.goal.z = pose.z;
+  arm_.goal.pitch = pose.pitch;
   arm_.goal.gripper = p.gripper;
   arm_.last_rx = now;
   HandleResult r = accept(p);
   r.arm_accepted = true;
+  r.arm_adjust = adjust;
   return r;
 }
 

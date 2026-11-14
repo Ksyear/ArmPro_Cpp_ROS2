@@ -3,11 +3,13 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
 
 #include "armpi_common/json.hpp"
+#include "armpi_kinematics/ros_params.hpp"
 
 namespace armpi_vr_bridge {
 
@@ -96,6 +98,12 @@ VrBridgeNode::VrBridgeNode(const rclcpp::NodeOptions& options) : rclcpp::Node("a
               session_cfg_.max_vx_m_s, session_cfg_.max_vy_m_s, session_cfg_.max_wz_rad_s,
               session_cfg_.base_watchdog_s, session_cfg_.arm_watchdog_s, session_cfg_.lease_s,
               session_cfg_.control_state_max_age_s);
+  const auto& ro = session_cfg_.reach;
+  RCLCPP_INFO(get_logger(),
+              "팔 목표 처리 %s (nearest: pitch 최대 ±%.0f°, 바꾼 pitch 범위 %.0f..%.0f°, 위치 당김 %s)",
+              armpi_kinematics::to_string(session_cfg_.arm_target_policy), ro.max_pitch_change_rad * 180.0 / M_PI,
+              ro.pitch_min_rad * 180.0 / M_PI, ro.pitch_max_rad * 180.0 / M_PI,
+              ro.allow_position_change ? "켬" : "끔");
   publish_outputs(false);
   publish_state(true);
 }
@@ -129,74 +137,19 @@ void VrBridgeNode::load_parameters() {
   session_cfg_.max_vy_m_s = declare_parameter<double>("chassis.max_vy_m_s", 0.25);
   session_cfg_.max_wz_rad_s = declare_parameter<double>("chassis.max_wz_rad_s", 1.2);
 
-  auto& w = session_cfg_.workspace;
-  w.x_min = declare_parameter<double>("arm.workspace.x_min", 0.0);
-  w.x_max = declare_parameter<double>("arm.workspace.x_max", 0.30);
-  w.y_min = declare_parameter<double>("arm.workspace.y_min", -0.25);
-  w.y_max = declare_parameter<double>("arm.workspace.y_max", 0.25);
-  w.z_min = declare_parameter<double>("arm.workspace.z_min", -0.05);
-  w.z_max = declare_parameter<double>("arm.workspace.z_max", 0.35);
-
-  auto& k = session_cfg_.kinematics;
-  const std::string kp = "arm.kinematics.";
-  k.base_height_m = declare_parameter<double>(kp + "base_height_m", 0.10);
-  k.upper_arm_m = declare_parameter<double>(kp + "upper_arm_m", 0.10);
-  k.forearm_m = declare_parameter<double>(kp + "forearm_m", 0.095);
-  k.hand_m = declare_parameter<double>(kp + "hand_m", 0.12);
-  // 관절 기준·범위는 하드웨어 프로필 값이다. 비어 있으면(값 없음·null) 제한 없는 기본값으로 사전 확인만 하고 경고한다
+  // 작업 공간·기구학·목표 보정(armpi_web_gateway 와 같은 도우미, armpi_kinematics/ros_params.hpp).
+  // 코드 기본값은 수신기 단독 시험용이다. 로봇에서는 armpi.yaml + hardware_profile.yaml 이 덮어쓴다.
+  // 관절 기준·범위가 비어 있으면 제한 없는 기본값으로 사전 확인만 하고 경고한다
   // (그때 실제 하드웨어의 제어 노드는 장치를 열지 않고 fault 로 시작한다). 형식이 틀리면 시작하지 않는다.
-  std::vector<std::string> blank_keys;
-  auto prof = [&](const std::string& name) {
-    rcl_interfaces::msg::ParameterDescriptor d;
-    d.dynamic_typing = true;
-    const auto v = declare_parameter(name, rclcpp::ParameterValue{}, d);
-    const bool is_blank = v.get_type() == rclcpp::ParameterType::PARAMETER_NOT_SET ||
-                          (v.get_type() == rclcpp::ParameterType::PARAMETER_STRING &&
-                           (v.get<std::string>().empty() || v.get<std::string>() == "null" || v.get<std::string>() == "~"));
-    if (is_blank) blank_keys.push_back(name);
-    return std::make_pair(is_blank, v);
-  };
-  auto prof_d = [&](const std::string& name, double def) {
-    const auto [is_blank, v] = prof(name);
-    if (is_blank) return def;
-    if (v.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) return v.template get<double>();
-    if (v.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) return static_cast<double>(v.template get<int64_t>());
-    throw std::invalid_argument(name + " 는 실수여야 합니다");
-  };
-  auto prof_dv = [&](const std::string& name, const std::vector<double>& def) {
-    const auto [is_blank, v] = prof(name);
-    if (is_blank) return def;
-    if (v.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY) return v.template get<std::vector<double>>();
-    if (v.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER_ARRAY) {
-      const auto iv = v.template get<std::vector<int64_t>>();
-      return std::vector<double>(iv.begin(), iv.end());
-    }
-    throw std::invalid_argument(name + " 는 실수 목록이어야 합니다");
-  };
-  k.j1_sign = prof_d(kp + "j1_sign", 1.0);
-  k.j1_offset = prof_d(kp + "j1_offset", 0.0);
-  k.j2_sign = prof_d(kp + "j2_sign", 1.0);
-  k.j2_offset = prof_d(kp + "j2_offset", 0.0);
-  k.j3_sign = prof_d(kp + "j3_sign", 1.0);
-  k.j3_offset = prof_d(kp + "j3_offset", 0.0);
-  k.j4_sign = prof_d(kp + "j4_sign", 1.0);
-  k.j4_offset = prof_d(kp + "j4_offset", 0.0);
-  // armpi_kinematics 기본값과 같다(제한 없음). 손목 높이 제한 등은 armpi.yaml 에서 준다.
-  k.min_wrist_height_m = declare_parameter<double>(kp + "min_wrist_height_m", -1.0e9);
-  k.min_elbow_bend_rad = declare_parameter<double>(kp + "min_elbow_bend_rad", 0.0);
-  const auto jmin = prof_dv(kp + "joint_min", std::vector<double>{-3.2, -3.2, -3.2, -3.2});
-  const auto jmax = prof_dv(kp + "joint_max", std::vector<double>{3.2, 3.2, 3.2, 3.2});
-  if (!blank_keys.empty()) {
+  const auto arm = armpi_kinematics::declare_arm_params(*this, armpi_kinematics::ArmParamDefaults{});
+  session_cfg_.workspace = arm.workspace;
+  session_cfg_.kinematics = arm.kinematics;
+  session_cfg_.arm_target_policy = arm.target_policy;
+  session_cfg_.reach = arm.reach;
+  if (!arm.blank_profile_keys.empty()) {
     std::string list;
-    for (const auto& n : blank_keys) list += (list.empty() ? "" : ", ") + n;
+    for (const auto& n : arm.blank_profile_keys) list += (list.empty() ? "" : ", ") + n;
     RCLCPP_WARN(get_logger(), "하드웨어 프로필 값 없음 → 제한 없는 기본값으로 사전 확인: %s", list.c_str());
-  }
-  if (jmin.size() != 4 || jmax.size() != 4) {
-    throw std::invalid_argument("arm.kinematics.joint_min/joint_max 는 실수 4개여야 합니다");
-  }
-  for (int i = 0; i < 4; ++i) {
-    k.joint_min[i] = jmin[static_cast<std::size_t>(i)];
-    k.joint_max[i] = jmax[static_cast<std::size_t>(i)];
   }
 
   allowed_sources_ = declare_parameter<std::vector<std::string>>("allowed_sources", std::vector<std::string>{});
@@ -357,6 +310,14 @@ std::string VrBridgeNode::state_json(const SessionSnapshot& s, const RxSummary& 
     reasons += json::quote(kv.first) + ":" + std::to_string(kv.second);
   }
   reasons += "}";
+  std::string adjust = "{";
+  first = true;
+  for (const auto& kv : st.arm_adjust) {
+    if (!first) adjust += ",";
+    first = false;
+    adjust += json::quote(kv.first) + ":" + std::to_string(kv.second);
+  }
+  adjust += "}";
   std::string j = "{";
   j += "\"owner\":" + opt_str(s.owner);
   j += ",\"owner_addr\":" + opt_str(s.owner_addr);
@@ -365,7 +326,7 @@ std::string VrBridgeNode::state_json(const SessionSnapshot& s, const RxSummary& 
   j += std::string(",\"emergency_stop\":") + jbool(s.emergency_stop);
   j += ",\"packets\":{\"received\":" + std::to_string(st.packets) + ",\"accepted\":" + std::to_string(st.accepted) +
        ",\"filtered\":" + std::to_string(st.filtered) + ",\"bytes\":" + std::to_string(st.bytes) +
-       ",\"reasons\":" + reasons + ",\"rate_hz\":" + opt_num(st.rate_hz) +
+       ",\"reasons\":" + reasons + ",\"arm_adjust\":" + adjust + ",\"rate_hz\":" + opt_num(st.rate_hz) +
        ",\"interval_p95_s\":" + opt_num(st.interval_p95_s) + ",\"interval_max_s\":" + opt_num(st.interval_max_s) +
        ",\"sequence_gaps\":" + std::to_string(st.sequence_gaps) +
        ",\"estimated_lost\":" + std::to_string(st.estimated_lost) +
@@ -408,13 +369,16 @@ void VrBridgeNode::log_stats() {
   };
   std::string reasons;
   for (const auto& kv : st.reasons) reasons += kv.first + "=" + std::to_string(kv.second) + " ";
+  std::string adjust;
+  for (const auto& kv : st.arm_adjust) adjust += kv.first + "=" + std::to_string(kv.second) + " ";
+  if (adjust.empty()) adjust = "- ";
   RCLCPP_INFO(get_logger(),
               "v3 통계: 수신 %lu, 수락 %lu, 주기 %s Hz, p95 간격 %s s, 최대 간격 %s s, 유실 추정 %lu, "
-              "역순/중복 %lu, 출처 차단 %lu, 사유 %s",
+              "역순/중복 %lu, 출처 차단 %lu, 사유 %s, 팔 목표 보정 %s",
               static_cast<unsigned long>(st.packets), static_cast<unsigned long>(st.accepted), f(st.rate_hz).c_str(),
               f(st.interval_p95_s).c_str(), f(st.interval_max_s).c_str(),
               static_cast<unsigned long>(st.estimated_lost), static_cast<unsigned long>(st.reordered_or_duplicate),
-              static_cast<unsigned long>(st.filtered), reasons.c_str());
+              static_cast<unsigned long>(st.filtered), reasons.c_str(), adjust.c_str());
 }
 
 void VrBridgeNode::ros_log(LogLevel level, const std::string& message) {

@@ -122,6 +122,13 @@ ArmTarget V3Client::set_arm_target(std::optional<double> x, std::optional<double
   if (z && std::isfinite(*z)) t.z = *z;
   if (pitch) t.pitch = clip(*pitch, -M_PI, M_PI);
   if (gripper) t.gripper = clip(*gripper, 0.0, 1.0);
+  if (opt_.arm_target_filter) {
+    const ArmTarget f = opt_.arm_target_filter(t, arm_target_);
+    if (std::isfinite(f.x) && std::isfinite(f.y) && std::isfinite(f.z) && std::isfinite(f.pitch) &&
+        std::isfinite(f.gripper)) {
+      t = ArmTarget{f.x, f.y, f.z, clip(f.pitch, -M_PI, M_PI), clip(f.gripper, 0.0, 1.0)};
+    }
+  }
   arm_target_ = t;
   if (accepted) arm_last_accepted_ = t;
   return t;

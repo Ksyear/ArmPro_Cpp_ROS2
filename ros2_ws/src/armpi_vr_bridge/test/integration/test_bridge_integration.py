@@ -125,6 +125,16 @@ def bridge_params_path():
         get_package_share_directory("armpi_vr_bridge"), "config", "vr_bridge.yaml")
 
 
+def bridge_param(name, default):
+    """수신기에 준 매개변수 YAML 의 값(/** 다음 armpi_vr_bridge 구역 순서로 덮어씀, 없으면 default)."""
+    import yaml
+    d = yaml.safe_load(open(bridge_params_path(), encoding="utf-8")) or {}
+    vals = {}
+    for sect in ("/**", "armpi_vr_bridge"):
+        vals.update((d.get(sect) or {}).get("ros__parameters") or {})
+    return vals.get(name, default)
+
+
 def chassis_limits():
     """수신기에 준 매개변수 YAML 의 차체 상한(파일에 없으면 노드 기본값). 상한 값을 시험에 박지 않는다."""
     import yaml
@@ -324,7 +334,28 @@ def test_03_arm_target_reject_rules_republish_and_watchdog(env):
     assert m is not None
     assert near(m[2], 0.12) and near(m[3], 0.02) and near(m[4], 0.07) and near(m[5], -1.0) and near(m[6], 0.7)
     assert m[7] == "armpi_arm_base"
-    # 작업 공간 밖 / IK 해 없음 → 거부, 이전 목표 유지
+    if bridge_param("arm.target_policy", "reject") == "nearest":
+        # nearest: 작업 공간 밖 / IK 해 없음도 가까운 자세로 수락(watchdog 갱신). 발행 목표는 항상 상자 안.
+        expect(c.arm(True, 0.5, 0.0, 0.05), True, "ok", "active")
+        t_adj = c.last_send
+        xmax = float(bridge_param("arm.workspace.x_max", 0.32))
+        m = wait_for(lambda: env.probe.snapshot("arm"), lambda m: m[1] is True and 0.12 < m[2] <= xmax + 1e-9,
+                     timeout=0.5, since=t_adj)
+        assert m is not None, "보정한 목표(상자 면 쪽)가 발행되지 않음"
+        print("\n[03] nearest: x 0.5 요청 → 발행 x %.4f (x_max %.3f), z %.4f, pitch %.4f" % (m[2], xmax, m[4], m[5]))
+        expect(c.arm(True, 0.28, 0.0, 0.30, 0.0), True, "ok", "active")  # 작업 공간 안, 실제 치수로 닿지 않음
+        t_last = c.last_send
+        off = wait_for(lambda: env.probe.snapshot("arm"), lambda m: m[1] is False, timeout=1.0, since=t_last)
+        assert off is not None
+        print("[03] nearest: 마지막 수락 → ArmTarget active:false: %.3f s" % (off[0] - t_last))
+        assert 0.35 <= off[0] - t_last <= 0.65
+        time.sleep(0.3)
+        assert [m for m in env.probe.snapshot("arm") if m[0] > off[0]] == [], "비활성 뒤에는 재발행하지 않음"
+        expect(c.arm(True), False, "neutral_required", "timeout")
+        expect(c.event("disconnect"), True, "ok")
+        c.close()
+        return
+    # reject: 작업 공간 밖 / IK 해 없음 → 거부, 이전 목표 유지
     expect(c.arm(True, 0.5, 0.0, 0.05), False, "workspace_limit", "active")
     expect(c.arm(True, 0.28, 0.0, 0.30, 0.0), False, "ik_unreachable", "active")  # 작업 공간 안, 실제 치수로 닿지 않음
     time.sleep(0.25)

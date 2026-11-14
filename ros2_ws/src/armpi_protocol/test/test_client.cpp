@@ -1,6 +1,8 @@
 // V3Client(클라이언트 세션) 시험: 가짜 데이터그램 연결 + 가짜 시계로 Python ArmPiV3Client 와 같은 상태 전이를 확인한다.
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <deque>
 #include <memory>
 #include <string>
@@ -222,4 +224,49 @@ TEST(ClientUuid, RandomV4Format) {
   EXPECT_EQ(u[14], '4');
   EXPECT_TRUE(canonical_uuid(u).has_value());
   EXPECT_NE(u, random_uuid_v4());
+}
+
+// 팔 목표 보정 연결부(arm_target_filter): set/move 마다 거치고, 결과가 그대로 목표가 된다.
+TEST(ClientArmFilter, FilterAppliesOnSetAndMoveAndKeepsGripperRange) {
+  std::vector<std::string> sent;
+  std::deque<std::string> inbox;
+  double t = 100.0;
+  ClientOptions o;
+  o.clock = [&t] { return t; };
+  o.new_uuid = [] { return kCid; };
+  int calls = 0;
+  ArmTarget seen_current{};
+  // x 를 0.25 로 자르는 보정(버튼으로 계속 눌러도 목표가 0.25 를 넘지 않아야 한다)
+  o.arm_target_filter = [&](const ArmTarget& want, const ArmTarget& cur) {
+    ++calls;
+    seen_current = cur;
+    ArmTarget r = want;
+    r.x = std::min(r.x, 0.25);
+    return r;
+  };
+  V3Client c(std::make_unique<FakeLink>(&sent, &inbox), o);
+  c.set_arm_target(0.20, 0.0, 0.10, -0.5, 0.3);
+  EXPECT_EQ(calls, 1);
+  EXPECT_DOUBLE_EQ(c.arm_target().x, 0.20);
+  for (int i = 0; i < 20; ++i) c.move_arm_target(0.01, 0, 0, 0, 0.1);
+  EXPECT_DOUBLE_EQ(c.arm_target().x, 0.25);     // 앞서 나가지 않음
+  EXPECT_DOUBLE_EQ(c.arm_target().gripper, 1.0);  // 그리퍼는 0..1 로 자름
+  EXPECT_DOUBLE_EQ(seen_current.x, 0.25);
+  c.move_arm_target(-0.01, 0, 0, 0, 0);
+  EXPECT_NEAR(c.arm_target().x, 0.24, 1e-12);    // 반대로 누르면 바로 돌아온다
+}
+
+TEST(ClientArmFilter, NonFiniteFilterResultIsIgnored) {
+  std::vector<std::string> sent;
+  std::deque<std::string> inbox;
+  ClientOptions o;
+  o.new_uuid = [] { return kCid; };
+  o.arm_target_filter = [](const ArmTarget& want, const ArmTarget&) {
+    ArmTarget r = want;
+    r.z = NAN;
+    return r;
+  };
+  V3Client c(std::make_unique<FakeLink>(&sent, &inbox), o);
+  c.set_arm_target(0.20, 0.0, 0.10, -0.5, 0.3);
+  EXPECT_DOUBLE_EQ(c.arm_target().z, 0.10);
 }

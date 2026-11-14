@@ -10,6 +10,7 @@
 //   4. ArmPiV3Discovery   검색 요청·응답(ARMPI_DISCOVER/1, ARMPI_HERE/1)
 //   5. ArmPiFrames        Unity(왼손, Y 위) ↔ ROS REP-103(오른손, Z 위) 좌표 변환
 //   6. ArmPiKinematics    로봇 armpi_kinematics 와 같은 식의 IK/FK(보내기 전 미리 확인용)
+//      ArmPiTargetProjector 로봇 arm.target_policy: nearest 와 같은 보정(닿지 않는 목표 → 닿는 가장 가까운 자세)
 //   7. ArmTeleopMapper    컨트롤러 6자유도 자세 → 손끝 목표(상대 이동 + 작업 공간 클램프 + 속도 제한) 제안
 //
 // 이 파일에 없는 것: 소켓·스레드·세션 상태기계(중립 확인, 무장, ACK 시간 초과, 비상정지 재전송).
@@ -698,6 +699,127 @@ namespace ArmPi.V3
         }
     }
 
+    /// <summary>
+    /// 로봇 armpi_kinematics::TargetProjector(arm.target_policy: nearest)와 같은 규칙(2026-11-11).
+    /// 닿을 수 없는 목표 → ① 상자 면으로 자름 ② 요청에 가장 가까운 pitch(± MaxPitchChange, [PitchMin, PitchMax] 안,
+    /// 같은 거리면 anchor pitch 쪽 먼저) ③ anchor → 목표 직선에서 닿는 가장 먼 점. 결과는 항상 상자 안·IK 해 있음.
+    /// 로봇이 같은 보정을 하므로 VR 쪽에서 꼭 쓸 필요는 없다. "닿는 곳까지만 간다"를 화면에 보여 줄 때 쓴다.
+    /// Kinematics 의 관절 기준·범위를 로봇 프로필 값으로 바꾸지 않으면 로봇 판정과 다를 수 있다.
+    /// </summary>
+    public sealed class ArmPiTargetProjector
+    {
+        public const int AdjustBox = 1, AdjustPitch = 2, AdjustPosition = 4;
+
+        public ArmPiKinematics Kinematics;
+        public Workspace Box;
+        public double MaxPitchChange = Math.PI / 2;   // arm.nearest.max_pitch_change_rad
+        public double PitchStep = Math.PI / 180.0;    // arm.nearest.pitch_step_rad
+        public double PitchMin = -Math.PI / 2;        // arm.nearest.pitch_min_rad
+        public double PitchMax = Math.PI / 6;         // arm.nearest.pitch_max_rad
+        public bool AllowPositionChange = true;       // arm.nearest.allow_position_change
+        public int BisectIterations = 14;             // arm.nearest.bisect_iterations
+
+        public ArmPiTargetProjector(ArmPiKinematics kinematics, Workspace box)
+        {
+            Kinematics = kinematics;
+            Box = box;
+        }
+
+        bool IkOk(double x, double y, double z, double pitch)
+        {
+            return Kinematics.Inverse(x, y, z, pitch, null) == IkStatus.Ok;
+        }
+
+        public bool Reachable(ArmTarget t)
+        {
+            return ArmPiV3.IsFinite(t.X) && ArmPiV3.IsFinite(t.Y) && ArmPiV3.IsFinite(t.Z) && ArmPiV3.IsFinite(t.Pitch) &&
+                   Box.Contains(t.X, t.Y, t.Z) && IkOk(t.X, t.Y, t.Z, t.Pitch);
+        }
+
+        bool FindPitch(double x, double y, double z, double want, double? prefer, double? extra, out double result)
+        {
+            result = want;
+            if (IkOk(x, y, z, want)) return true;
+            if (MaxPitchChange > 0)
+            {
+                int n = (int)Math.Floor(MaxPitchChange / PitchStep + 1e-9);
+                for (int i = 1; i <= n + 1; i++)
+                {
+                    double d = i <= n ? i * PitchStep : MaxPitchChange;
+                    if (i == n + 1 && Math.Abs(d - n * PitchStep) < 1e-9) break;
+                    double first = want - d, second = want + d;
+                    if (prefer.HasValue && Math.Abs(second - prefer.Value) < Math.Abs(first - prefer.Value))
+                    {
+                        double tmp = first; first = second; second = tmp;
+                    }
+                    foreach (double c in new[] { first, second })
+                    {
+                        if (c >= PitchMin - 1e-9 && c <= PitchMax + 1e-9 && IkOk(x, y, z, c))
+                        {
+                            result = c;
+                            return true;
+                        }
+                    }
+                }
+            }
+            if (extra.HasValue && ArmPiV3.IsFinite(extra.Value) && IkOk(x, y, z, extra.Value))
+            {
+                result = extra.Value;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// ok=false 면 보정할 수 없음(anchor 없음 등). adjust 는 AdjustBox|AdjustPitch|AdjustPosition 비트. 그리퍼는 그대로 둔다.
+        /// anchor: 닿는다고 알려진 자세(마지막으로 보낸 목표 등). 없으면 null.
+        /// </summary>
+        public bool Project(ArmTarget target, ArmTarget? anchor, out ArmTarget result, out int adjust)
+        {
+            result = target;
+            adjust = 0;
+            if (!ArmPiV3.IsFinite(target.X) || !ArmPiV3.IsFinite(target.Y) || !ArmPiV3.IsFinite(target.Z) ||
+                !ArmPiV3.IsFinite(target.Pitch)) return false;
+            Vec3 c = Box.Clamp(new Vec3(target.X, target.Y, target.Z));
+            if (c.X != target.X || c.Y != target.Y || c.Z != target.Z) adjust |= AdjustBox;
+            if (IkOk(c.X, c.Y, c.Z, target.Pitch))
+            {
+                result = new ArmTarget(c.X, c.Y, c.Z, target.Pitch, target.Gripper);
+                return true;
+            }
+            double? prefer = anchor.HasValue ? anchor.Value.Pitch : (double?)null;
+            double pc;
+            if (FindPitch(c.X, c.Y, c.Z, target.Pitch, prefer, null, out pc))
+            {
+                result = new ArmTarget(c.X, c.Y, c.Z, pc, target.Gripper);
+                adjust |= AdjustPitch;
+                return true;
+            }
+            if (!AllowPositionChange || !anchor.HasValue || !Reachable(anchor.Value)) return false;
+            ArmTarget a = anchor.Value;
+            ArmTarget best = new ArmTarget(a.X, a.Y, a.Z, a.Pitch, target.Gripper);
+            double lo = 0, hi = 1;
+            for (int it = 0; it < BisectIterations; it++)
+            {
+                double s = 0.5 * (lo + hi);
+                double x = a.X + s * (c.X - a.X), y = a.Y + s * (c.Y - a.Y), z = a.Z + s * (c.Z - a.Z);
+                if (FindPitch(x, y, z, target.Pitch, prefer, a.Pitch, out pc))
+                {
+                    lo = s;
+                    best = new ArmTarget(x, y, z, pc, target.Gripper);
+                }
+                else
+                {
+                    hi = s;
+                }
+            }
+            result = best;
+            adjust |= AdjustPosition;
+            if (best.Pitch != target.Pitch) adjust |= AdjustPitch;
+            return true;
+        }
+    }
+
     // ───────────────────────── 7. 컨트롤러 → 팔 목표 (제안) ─────────────────────────
 
     public struct ArmTarget
@@ -767,7 +889,10 @@ namespace ArmPi.V3
     /// 제안: 상대 이동(clutch) 방식.
     ///   - 그립을 누르는 순간(Engage) 컨트롤러 자세와 로봇 손끝 현재값을 기준으로 잡는다.
     ///   - 누르는 동안(Update) "컨트롤러가 움직인 만큼 × Scale" 을 손끝 목표에 더한다.
-    ///   - 결과를 작업 공간 상자로 자르고, 속도 상한으로 한 걸음씩만 움직이고, IK 가 안 풀리면 직전 목표를 유지한다.
+    ///   - 결과를 작업 공간 상자로 자르고, 속도 상한으로 한 걸음씩만 움직인다.
+    ///   - 닿지 않는 목표: 기본(Projector·Kinematics 둘 다 null)은 그대로 보낸다. 로봇(arm.target_policy: nearest, 2026-11-11 기본)이
+    ///     닿는 가장 가까운 자세로 받는다. Projector 를 넣으면 같은 보정을 VR 쪽에서 미리 해서 Output 이 로봇 목표와 같아진다.
+    ///     Kinematics 만 넣으면 예전 동작(IK 가 안 풀리면 직전 목표 유지 — pitch 를 고정한 채 막혀 "자꾸 멈춤"의 원인이 된다).
     ///   - 놓으면(Release) 목표를 그대로 둔다(로봇은 control_active:false 를 받으면 현재 위치를 유지).
     /// 입력 자세는 "조작 기준 좌표계"(Unity 에서 로봇 앞 방향을 +Z 로 맞춘 앵커의 로컬 좌표)로 넘긴다.
     ///   예) handPos = anchor.InverseTransformPoint(controller.position)
@@ -783,10 +908,14 @@ namespace ArmPi.V3
         public double PitchMax = 0.0;
         public bool UseControllerPitch = true; // false 면 pitch 를 잡을 때 값으로 고정
         public Workspace Box = Workspace.Robot;
-        public ArmPiKinematics Kinematics = new ArmPiKinematics();  // null 이면 IK 미리 확인 안 함
+        // 둘 다 null(기본): 미리 확인하지 않는다(로봇이 보정). Projector: 로봇과 같은 보정. Kinematics: IK 안 되면 직전 목표 유지(예전 기본).
+        // 어느 쪽이든 관절 기준·범위를 로봇 프로필 값으로 바꾸지 않으면 로봇 판정과 다를 수 있다(ArmPiKinematics 기본값은 시험용).
+        public ArmPiTargetProjector Projector = null;
+        public ArmPiKinematics Kinematics = null;
 
         public bool Engaged { get; private set; }
         public bool LastIkBlocked { get; private set; }
+        public bool LastAdjusted { get; private set; }  // Projector 가 목표를 바꿨는지(화면 표시·진동용)
         public ArmTarget Output { get { return _out; } }
 
         Vec3 _hand0;
@@ -838,8 +967,24 @@ namespace ArmPi.V3
             double dp = wantPitch - _out.Pitch;
             double nextPitch = Math.Abs(dp) <= maxP ? wantPitch : _out.Pitch + Math.Sign(dp) * maxP;
 
-            // 4) IK 미리 확인: 안 풀리면 위치·pitch 는 직전 값 유지(그리퍼만 반영)
+            // 4) 닿지 않는 목표 처리(그리퍼는 항상 반영)
             double g = ArmPiV3.IsFinite(gripper01) ? ArmPiV3.Clamp(gripper01, 0.0, 1.0) : _out.Gripper;
+            LastAdjusted = false;
+            if (Projector != null)
+            {
+                ArmTarget adj;
+                int how;
+                if (Projector.Project(new ArmTarget(next.X, next.Y, next.Z, nextPitch, g), _out, out adj, out how))
+                {
+                    LastIkBlocked = false;
+                    LastAdjusted = how != 0;
+                    _out = adj;
+                    return _out;
+                }
+                LastIkBlocked = true;
+                _out.Gripper = g;
+                return _out;
+            }
             if (Kinematics != null && Kinematics.Inverse(next.X, next.Y, next.Z, nextPitch, null) != IkStatus.Ok)
             {
                 LastIkBlocked = true;

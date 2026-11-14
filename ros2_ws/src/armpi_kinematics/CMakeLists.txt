@@ -6,7 +6,7 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic)
 find_package(ament_cmake REQUIRED)
 
-add_library(armpi_kinematics STATIC src/arm_kinematics.cpp)
+add_library(armpi_kinematics STATIC src/arm_kinematics.cpp src/reachability.cpp)
 set_target_properties(armpi_kinematics PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(armpi_kinematics PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -22,5 +22,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_arm_kinematics test/test_arm_kinematics.cpp)
   target_link_libraries(test_arm_kinematics armpi_kinematics)
+  ament_add_gtest(test_reachability test/test_reachability.cpp)
+  target_link_libraries(test_reachability armpi_kinematics)
 endif()
 ament_package()

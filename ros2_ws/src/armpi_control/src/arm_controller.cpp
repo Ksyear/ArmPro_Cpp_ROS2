@@ -87,7 +87,11 @@ const char* to_string(TargetResult r) {
 }
 
 ArmController::ArmController(const ArmConfig& cfg, std::shared_ptr<ah::ServoBus> bus)
-    : cfg_(cfg), bus_(std::move(bus)), kin_(cfg.kinematics), map_ok_(cfg.servo_map.valid()) {}
+    : cfg_(cfg),
+      bus_(std::move(bus)),
+      kin_(cfg.kinematics),
+      projector_(cfg.kinematics, cfg.workspace, cfg.reach),
+      map_ok_(cfg.servo_map.valid()) {}
 
 double ArmController::joint5_rad() const { return ah::servo_to_joint(cfg_.servo_map, 4, cfg_.joint5_servo_value); }
 
@@ -267,9 +271,42 @@ void ArmController::tick(double now, double dt, bool inhibit) {
   const ArmPose cand = interpolate_step(current_, goal_, cfg_.limits, dt);
   if (!same_pose(cand, current_)) {
     const auto r = kin_.inverse(ak::Pose{cand.x, cand.y, cand.z, cand.pitch});
-    if (r.status == ak::IkStatus::kOk) {
-      current_ = cand;
-      desired_joints_ = {r.joints.j1, r.joints.j2, r.joints.j3, r.joints.j4, joint5_rad()};
+    // 경로가 막혔을 때 nearest 정책이면 같은 보정 규칙으로 가까운 자세를 찾는다(안전 범위는 그대로).
+    // 기준은 지금 보간 자세(항상 닿음). 보정한 자세가 목표까지 남은 거리를 줄일 때만 받는다
+    // (같은 자리에서 pitch 만 오가며 떨지 않게). 줄지 않으면 막힌 것으로 보고 지금 자세를 유지한다.
+    bool adjusted = false;
+    ak::ReachResult pr;
+    if (r.status != ak::IkStatus::kOk && cfg_.target_policy == ak::TargetPolicy::kNearest) {
+      const ak::Pose anchor{current_.x, current_.y, current_.z, current_.pitch};
+      pr = projector_.project(ak::Pose{cand.x, cand.y, cand.z, cand.pitch}, &anchor);
+      if (pr.ok) {
+        // 남은 거리 = 위치 거리 + w × pitch 차이. w 는 두 속도 상한의 비(1 rad 의 pitch 를 m 로 환산)
+        const double w = cfg_.limits.max_pitch_rate_rad_s > 0.0
+                             ? cfg_.limits.max_linear_speed_m_s / cfg_.limits.max_pitch_rate_rad_s
+                             : 0.1;
+        auto remaining = [&](double x, double y, double z, double pitch) {
+          return std::sqrt((x - goal_.x) * (x - goal_.x) + (y - goal_.y) * (y - goal_.y) +
+                           (z - goal_.z) * (z - goal_.z)) +
+                 w * std::fabs(pitch - goal_.pitch);
+        };
+        adjusted = remaining(pr.pose.x, pr.pose.y, pr.pose.z, pr.pose.pitch) <
+                   remaining(current_.x, current_.y, current_.z, current_.pitch) - 1e-6;
+      }
+    }
+    if (r.status == ak::IkStatus::kOk || adjusted) {
+      if (adjusted) {
+        const auto r2 = kin_.inverse(pr.pose);  // project() 결과는 항상 IK 해가 있다
+        current_ = ArmPose{pr.pose.x, pr.pose.y, pr.pose.z, pr.pose.pitch, cand.gripper};
+        desired_joints_ = {r2.joints.j1, r2.joints.j2, r2.joints.j3, r2.joints.j4, joint5_rad()};
+        if (!path_adjusting_) {
+          path_adjusting_ = true;
+          event(ArmEvent::kInfo, "보간 경로 보정(" + ak::adjust_to_string(pr.adjust) + "): " + fmt_pose(current_));
+        }
+      } else {
+        current_ = cand;
+        desired_joints_ = {r.joints.j1, r.joints.j2, r.joints.j3, r.joints.j4, joint5_rad()};
+        path_adjusting_ = false;
+      }
       if (ik_blocked_) {
         ik_blocked_ = false;
         event(ArmEvent::kInfo, "IK 다시 풀림: " + fmt_pose(current_));

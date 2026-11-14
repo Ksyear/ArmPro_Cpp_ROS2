@@ -247,7 +247,7 @@ void UdpServer::handle(std::string_view data, const Endpoint& from) {
     std::lock_guard<std::mutex> lk(mutex_);
     const double now = clock_();
     r = session_.handle_datagram(data, from, now);
-    stats_.observe(now, data.size(), r.ack);
+    stats_.observe(now, data.size(), r.ack, r.arm_adjust);
   }
   // 안전 우선: 비상정지 요청 → 출력 → ACK 순서.
   if (r.estop_change && cb_.on_estop) {

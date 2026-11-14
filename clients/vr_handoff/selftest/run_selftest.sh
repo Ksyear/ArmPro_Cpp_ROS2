@@ -22,7 +22,9 @@ trap cleanup EXIT
 docker run -d --rm --name "$NAME" --network none -e PYTHONDONTWRITEBYTECODE=1 \
   -v "$PROJ/protocol_v3:/v3:ro" armpi-dev:humble \
   python3 -B /v3/mock_robot.py --bind 127.0.0.1 --rosbridge-port 0 --camera-port 0 \
-  --workspace 0.05,0.32,-0.25,0.25,-0.08,0.32 >/dev/null   # 로봇 armpi.yaml 작업 공간과 맞춤
+  --workspace 0.05,0.32,-0.25,0.25,-0.08,0.32 --arm-policy reject >/dev/null
+  # 작업 공간은 로봇 armpi.yaml 과 맞춤. 팔 목표는 reject(이 시험은 workspace_limit·ik_unreachable ACK 해석을 확인한다.
+  # 로봇 기본값 nearest 에서는 이런 거부가 거의 오지 않는다 — docs/08 참고)
 sleep 2
 
 docker run --rm --network "container:$NAME" -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \

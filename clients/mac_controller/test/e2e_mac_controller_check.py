@@ -143,6 +143,10 @@ def main():
     ap.add_argument("--limits", default="0.25,0.25,1.2",
                     help="로봇 차체 상한 vx,vy,wz(m/s, m/s, rad/s). 기본 = armpi.yaml·mock_robot.py 기본값")
     ap.add_argument("--only", choices=["estop-idle"], help="estop-idle: on-demand 조종기에서 연결 없이 비상정지만 확인")
+    ap.add_argument("--arm-policy", choices=["nearest", "reject"], default="nearest",
+                    help="로봇·조종기의 arm.target_policy(C++ 웹 조종기 + armpi.yaml 기본 nearest). "
+                         "파이썬 Mac 조종기는 버튼 목표 보정이 없으므로 reject 로봇과만 이 시험을 쓴다")
+    ap.add_argument("--workspace-x-max", type=float, default=0.32, help="nearest 확인에 쓰는 작업 공간 x_max (m)")
     args = ap.parse_args()
     api = Api(args.http)
     t_start = time.time()
@@ -246,17 +250,38 @@ def main():
         check("U 키 0.4 s → 목표 z 증가", z1 - z0 > 0.01, "z %.4f → %.4f" % (z0, z1))
 
     acc = api.state()["udp"]["arm_target"]
-    api.cmd("arm_target", x=0.45)
-    got = wait_for(lambda: (lambda s: s if (s["udp"]["arm_last_reject"] or {}).get("reason") == "workspace_limit" else None)(api.state()), 1.0)
-    st = got or api.state()
-    check("작업 공간 밖 목표(x=0.45) → workspace_limit 표시", bool(got), "reject=%s" % st["udp"]["arm_last_reject"])
-    check("거부 뒤 목표를 마지막 수락값으로 되돌림", abs(st["udp"]["arm_target"]["x"] - acc["x"]) < 0.003,
-          "target.x=%.4f 마지막 수락=%.4f" % (st["udp"]["arm_target"]["x"], acc["x"]))
-    check("거부 뒤에도 팔 채널 active 유지", st["udp"]["arm"]["state"] == "active", st["udp"]["arm"]["state"])
-    time.sleep(0.2)
-    api.cmd("arm_target", x=0.28, y=0.20, z=0.30, pitch=0.0)
-    got = wait_for(lambda: (lambda s: s if (s["udp"]["arm_last_reject"] or {}).get("reason") == "ik_unreachable" else None)(api.state()), 1.0)
-    check("도달 불가 목표 → ik_unreachable 표시", bool(got), "reject=%s" % (got or api.state())["udp"]["arm_last_reject"])
+    if args.arm_policy == "nearest":
+        # nearest(로봇·조종기 같은 보정 규칙): 범위 밖·닿지 않는 목표도 닿는 가장 가까운 자세로 바뀌고 거부가 없다.
+        x_max = args.workspace_x_max
+        api.cmd("arm_target", x=0.45)
+        time.sleep(0.5)
+        st = api.state()
+        check("작업 공간 밖 목표(x=0.45) → 거부 없이 상자 안으로 보정", not st["udp"]["arm_last_reject"]
+              and st["udp"]["arm_target"]["x"] <= x_max + 1e-6,
+              "target.x=%.4f (x_max %.3f) reject=%s" % (st["udp"]["arm_target"]["x"], x_max, st["udp"]["arm_last_reject"]))
+        check("보정 뒤 목표가 요청 쪽으로 움직임(앞서 나가지 않음)", acc["x"] < st["udp"]["arm_target"]["x"] <= x_max + 1e-6,
+              "이전 %.4f → %.4f" % (acc["x"], st["udp"]["arm_target"]["x"]))
+        check("보정 뒤에도 팔 채널 active 유지", st["udp"]["arm"]["state"] == "active", st["udp"]["arm"]["state"])
+        time.sleep(0.2)
+        api.cmd("arm_target", x=0.28, y=0.20, z=0.30, pitch=0.0)
+        time.sleep(0.5)
+        st = api.state()
+        t = st["udp"]["arm_target"]
+        changed = (abs(t["x"] - 0.28) + abs(t["y"] - 0.20) + abs(t["z"] - 0.30) + abs(t["pitch"])) > 1e-4
+        check("도달 불가 목표 → 거부 없이 가까운 자세로 보정", not st["udp"]["arm_last_reject"] and changed,
+              "target=%s reject=%s" % (t, st["udp"]["arm_last_reject"]))
+    else:
+        api.cmd("arm_target", x=0.45)
+        got = wait_for(lambda: (lambda s: s if (s["udp"]["arm_last_reject"] or {}).get("reason") == "workspace_limit" else None)(api.state()), 1.0)
+        st = got or api.state()
+        check("작업 공간 밖 목표(x=0.45) → workspace_limit 표시", bool(got), "reject=%s" % st["udp"]["arm_last_reject"])
+        check("거부 뒤 목표를 마지막 수락값으로 되돌림", abs(st["udp"]["arm_target"]["x"] - acc["x"]) < 0.003,
+              "target.x=%.4f 마지막 수락=%.4f" % (st["udp"]["arm_target"]["x"], acc["x"]))
+        check("거부 뒤에도 팔 채널 active 유지", st["udp"]["arm"]["state"] == "active", st["udp"]["arm"]["state"])
+        time.sleep(0.2)
+        api.cmd("arm_target", x=0.28, y=0.20, z=0.30, pitch=0.0)
+        got = wait_for(lambda: (lambda s: s if (s["udp"]["arm_last_reject"] or {}).get("reason") == "ik_unreachable" else None)(api.state()), 1.0)
+        check("도달 불가 목표 → ik_unreachable 표시", bool(got), "reject=%s" % (got or api.state())["udp"]["arm_last_reject"])
     api.cmd("gripper", value=1.0)
     got = wait_for(lambda: robot_status(api)[1].get("arm_target", {}).get("gripper") == 1.0, 1.5)
     check("그리퍼 1.0(닫힘) → 가짜 로봇 목표 gripper 1.0", bool(got))

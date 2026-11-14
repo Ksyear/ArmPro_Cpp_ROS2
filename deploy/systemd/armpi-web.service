@@ -15,7 +15,9 @@ Group=ubuntu
 Environment=HOME=/home/ubuntu
 Environment=ROS_DOMAIN_ID=0
 Environment=ROS_LOCALHOST_ONLY=0
-ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && exec /opt/armpi/ros2_ws/install/lib/armpi_web_gateway/armpi_web_gateway_node --ros-args --params-file /opt/armpi/ros2_ws/install/share/armpi_bringup/config/armpi.yaml'
+# 하드웨어 프로필(관절 기준·범위)이 있으면 함께 읽는다: 팔 버튼 목표를 로봇 수신기와 같은 규칙으로 보정(arm.target_policy).
+# 없으면 웹 조종기의 보정만 꺼지고 나머지는 그대로 동작한다. ($$ = systemd 가 바꾸지 않는 bash 의 $)
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/armpi/ros2_ws/install/setup.bash && CFG=/opt/armpi/ros2_ws/install/share/armpi_bringup/config && PROF=() && if [ -f $$CFG/hardware_profile.yaml ]; then PROF=(--params-file $$CFG/hardware_profile.yaml); fi && exec /opt/armpi/ros2_ws/install/lib/armpi_web_gateway/armpi_web_gateway_node --ros-args --params-file $$CFG/armpi.yaml $${PROF[@]}'
 Restart=on-failure
 RestartSec=3
 # SIGINT: 두 채널 중립·disconnect 를 보내고 끝낸다.

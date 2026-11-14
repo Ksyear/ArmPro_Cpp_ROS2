@@ -21,7 +21,7 @@ VR·휴대폰·PC 조종기가 같은 UDP 규격(Protocol v3)으로 로봇을 �
 | `ros2_ws/src/armpi_bringup` | launch, 설정(`config/armpi.yaml`), 하드웨어 프로필 본보기(`config/hardware_profile.template.yaml`)·시험용 프로필, Fast DDS 설정, 통합·종단 시험 |
 | `clients/` | Mac 조종기(파이썬)·Mac 앱(Swift)·Android 앱·Unity용 C# 예제 |
 | `protocol_v3/` | 파이썬 참조 클라이언트, 가짜 로봇, 규격 적합성 시험 |
-| `deploy/` | systemd 유닛, sysctl(DDS 버퍼), udev 규칙 |
+| `deploy/` | systemd 유닛, sysctl(DDS 버퍼), udev 규칙, logind(SSH 종료 때 공유 메모리 유지) |
 | `tools/` | 첫 부팅 읽기 전용 점검, 서보 읽기 전용 진단 |
 | `docs/` | 규격·인터페이스·통신 구조·VR 연동·시험 계획·한계·구조 문서 |
 
@@ -70,7 +70,7 @@ ros2 launch armpi_bringup armpi.launch.py        # 실제 로봇(하드웨어 �
 - 값이 하나라도 비어 있거나 형식이 틀리면 제어 노드는 **장치를 열지 않고** `fault`("하드웨어 프로필 값 없음 …: 빠진 키")로 시작한다. 바퀴·서보에 아무것도 보내지 않는다.
 - `config/test_hardware_profile.yaml`은 가짜 하드웨어·시험 전용 값이다. **실제 로봇 값이 아니다**(일부러 다르게 골랐다). 실제 로봇에 쓰면 팔·바퀴가 엉뚱하게 움직일 수 있다.
 
-- 로봇에서 자동 시작하려면 `deploy/systemd/`의 유닛을 쓴다. 카메라 영상(큰 메시지)에는 `deploy/sysctl/60-armpi-dds.conf`가 필요하다.
+- 로봇에서 자동 시작하려면 `deploy/systemd/`의 유닛을 쓴다. 카메라 영상(큰 메시지)에는 `deploy/sysctl/60-armpi-dds.conf`가 필요하다. 서비스를 로그인 사용자(예: `ubuntu`)로 돌리면 `deploy/logind/90-armpi-keep-ipc.conf`를 `/etc/systemd/logind.conf.d/`에 넣는다(넣지 않으면 SSH 를 닫을 때 노드 사이 통신이 끊긴다, `docs/11` 0000절).
 - 카메라 영상: `http://<IP>:8080/stream?topic=/usb_cam/image_raw&type=ros_compressed&qos_profile=sensor_data`. **원시 영상은 반드시 `qos_profile=sensor_data`(best-effort)로 받는다.** 기본(RELIABLE)으로 받으면(스냅샷·`type=mjpeg` 포함) 로봇 안 ROS 통신이 막힐 수 있다(2026-11-04 실기, `docs/11` 0절).
 - 소프트웨어를 바꾼 뒤에는 서비스 재시작보다 **로봇 재부팅**을 권장한다(같은 실기).
 - 조종기: `clients/mac_controller/README_KO.md`, 휴대폰 화면 `http://<로봇 IP>:18765/mobile`.

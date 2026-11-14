@@ -440,7 +440,9 @@ colcon build --merge-install --packages-up-to armpi_web_gateway --cmake-args -DB
 (cd /tmp/ws/src && find armpi_common armpi_protocol armpi_web_gateway -type f | sort | xargs sha256sum) > /tmp/source_sha256.txt
 echo "[appui] 빌드 완료"
 source install/setup.bash
-python3 -B /v3/mock_robot.py --bind 0.0.0.0 --discovery-port 0 --stats-period 30 > /tmp/mock.log 2>&1 &
+# 화면의 '팔 목표 거부' 알림 위치를 확인하려고 가짜 로봇은 규격 v3 원래 동작(reject)으로 띄운다.
+# 로봇 기본값(nearest, 거부 대신 닿는 자세로 보정)은 수신기·게이트웨이 시험에서 따로 확인한다.
+python3 -B /v3/mock_robot.py --bind 0.0.0.0 --discovery-port 0 --stats-period 30 --arm-policy reject > /tmp/mock.log 2>&1 &
 sleep 1
 exec ros2 run armpi_web_gateway armpi_web_gateway_node --ros-args -p http_bind:=0.0.0.0 -p http_port:=18765 \
   -p robot:=127.0.0.1 -p session:=on-demand > /tmp/gateway.log 2>&1

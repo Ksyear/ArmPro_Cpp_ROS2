@@ -183,6 +183,7 @@ internal static class Program
         Check(Near(t.X, 0.1347, 1e-9) && Near(t.Z, 0.0753, 1e-9) && Near(t.Pitch, -1.0263, 1e-9),
               "손을 Unity 앞(+Z)으로 3 cm → 손끝 x +3 cm, pitch 유지", t.ToString());
         var m2 = new ArmTeleopMapper();
+        m2.Kinematics = kin;  // 예전 기본 동작(IK 안 되면 직전 목표 유지)
         m2.Engage(new Vec3(0, 1, 0), Quat.Identity, ArmTarget.Home);
         ArmTarget t2 = m2.Update(new Vec3(0, 1.5, 0), Quat.Identity, 1.0, 0.05);
         Check(Near(t2.Z - ArmTarget.Home.Z, 0.0075, 1e-9) && t2.Gripper == 1.0,
@@ -195,6 +196,45 @@ internal static class Program
         ArmTarget t3 = m3.Output;
         for (int k = 0; k < 200; k++) t3 = m3.Update(new Vec3(0.5, 1, 0), Quat.Identity, 0.0, 0.05);
         Check(t3.Y >= Workspace.Conservative.YMin - 1e-12 && t3.Y < 0, "Unity 오른쪽 → ROS y 감소, 작업 공간 안", t3.ToString());
+
+        // 목표 보정(로봇 arm.target_policy: nearest 와 같은 규칙)
+        var pj = new ArmPiTargetProjector(kin, Workspace.Robot);
+        ArmTarget pr; int how;
+        Check(pj.Project(ArmTarget.Home, null, out pr, out how) && how == 0 && Near(pr.X, ArmTarget.Home.X, 1e-12),
+              "보정: 닿는 목표(기본 자세)는 그대로", pr.ToString());
+        Check(pj.Project(new ArmTarget(0.1047, 0.40, 0.0753, -1.0263, 0.5), ArmTarget.Home, out pr, out how) &&
+              (how & ArmPiTargetProjector.AdjustBox) != 0 && pj.Reachable(pr) && pr.Gripper == 0.5,
+              "보정: 상자 밖(y 0.40) → 상자 안·IK 해 있음, 그리퍼 그대로", pr.ToString() + " how=" + how);
+        Check(pj.Project(new ArmTarget(0.32, 0.25, 0.30, 0.0, 1.0), ArmTarget.Home, out pr, out how) &&
+              (how & ArmPiTargetProjector.AdjustPosition) != 0 && pj.Reachable(pr),
+              "보정: 어떤 자세로도 닿지 않는 모서리 → 기본 자세 쪽으로 당겨 닿는 점", pr.ToString() + " how=" + how);
+        Check(!pj.Project(new ArmTarget(0.32, 0.25, 0.30, 0.0, 1.0), null, out pr, out how) || pj.Reachable(pr),
+              "보정: 기준(anchor)이 없으면 실패하거나 닿는 점");
+        int bad = 0;
+        var rng = new Random(11);
+        ArmTarget anc = ArmTarget.Home;
+        for (int k = 0; k < 2000; k++)
+        {
+            var want = new ArmTarget(rng.NextDouble() * 0.7 - 0.2, rng.NextDouble() - 0.5, rng.NextDouble() * 0.8 - 0.3,
+                                     rng.NextDouble() * 2 * Math.PI - Math.PI, 0);
+            if (!pj.Project(want, anc, out pr, out how) || !pj.Reachable(pr)) bad++;
+            else anc = pr;
+        }
+        Check(bad == 0, "보정: 무작위 목표 2000개 모두 상자 안·IK 해 있는 자세로", "실패 " + bad);
+        var m4 = new ArmTeleopMapper();
+        m4.Projector = pj;
+        m4.Engage(new Vec3(0, 1, 0), Quat.Identity, ArmTarget.Home);
+        ArmTarget t4 = m4.Output;
+        bool blocked4 = false;
+        for (int k = 0; k < 200; k++) { t4 = m4.Update(new Vec3(0, 1.5, 0), Quat.Identity, 1.0, 0.05); blocked4 |= m4.LastIkBlocked; }
+        Check(!blocked4 && pj.Reachable(t4) && t4.Z > t2.Z + 1e-6,
+              "매퍼+보정: 같은 위쪽 이동에서 멈추지 않고 예전보다 더 올라감(닿는 자세 안)", t4.ToString() + " (예전 " + t2.ToString() + ")");
+        var m5 = new ArmTeleopMapper();  // 기본: 미리 확인 안 함(로봇이 보정)
+        m5.Engage(new Vec3(0, 1, 0), Quat.Identity, ArmTarget.Home);
+        ArmTarget t5 = m5.Output;
+        for (int k = 0; k < 200; k++) t5 = m5.Update(new Vec3(0, 1.5, 0), Quat.Identity, 1.0, 0.05);
+        Check(!m5.LastIkBlocked && Near(t5.Z, Workspace.Robot.ZMax, 1e-9),
+              "매퍼 기본: 미리 막지 않고 상자 끝까지 보낸다(로봇 nearest 가 보정)", t5.ToString());
     }
 
     // ───────────────────────── 2부 ─────────────────────────

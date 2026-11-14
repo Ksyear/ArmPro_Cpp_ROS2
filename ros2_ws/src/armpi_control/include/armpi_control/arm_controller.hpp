@@ -4,7 +4,7 @@
 // 안전 규칙 (docs/02_ROS2_INTERFACES.md 제어기 2차 방어, docs/01_PROTOCOL_V3_SPEC.md 상태 규칙):
 //   - ArmTarget 이 timeout(0.6 s) 동안 없음 / active:false / 비상정지 → 현재 명령 자세 유지. 새 명령을 보내지 않는다.
 //   - 토크 해제(LOAD_OR_UNLOAD 0)는 절대 보내지 않는다(팔이 떨어짐).
-//   - IK 실패 → 직전 유효 자세 유지 + 경고.
+//   - IK 실패 → 직전 유효 자세 유지 + 경고. (arm.target_policy: nearest 이면 보간 경로에서만 가까운 자세로 보정)
 #pragma once
 
 #include <array>
@@ -16,6 +16,7 @@
 #include "armpi_hardware/conversions.hpp"
 #include "armpi_hardware/devices.hpp"
 #include "armpi_kinematics/arm_kinematics.hpp"
+#include "armpi_kinematics/reachability.hpp"
 
 namespace armpi_control {
 
@@ -44,6 +45,10 @@ struct ArmConfig {
   armpi_kinematics::Workspace workspace{};
   ArmRateLimits limits{};
   double max_joint_speed_rad_s{2.0};  // IK 뒤 관절 속도 제한(특이점 근처 급회전 방지). 0 이하 = 끔
+  // 보간 경로 중간에서 IK 가 막혔을 때. kReject = 직전 유효 자세 유지(원래 동작, 라이브러리 기본값),
+  // kNearest = 같은 보정 규칙(armpi_kinematics/reachability.hpp)으로 가까운 자세를 찾아 계속 간다. armpi.yaml 의 arm.target_policy.
+  armpi_kinematics::TargetPolicy target_policy{armpi_kinematics::TargetPolicy::kReject};
+  armpi_kinematics::ReachOptions reach{};
   double target_timeout_s{0.6};
   int command_duration_ms{40};
   // 아래 네 묶음은 하드웨어 프로필 값(코드 기본값 없음, armpi_hardware/hardware_profile.hpp)
@@ -137,6 +142,7 @@ class ArmController {
   ArmConfig cfg_;
   std::shared_ptr<armpi_hardware::ServoBus> bus_;
   armpi_kinematics::ArmKinematics kin_;
+  armpi_kinematics::TargetProjector projector_;
   bool map_ok_{false};
 
   ArmMode mode_{ArmMode::kUninitialized};
@@ -152,6 +158,7 @@ class ArmController {
   double last_feed_{-1e18};
   bool last_active_{false};
   bool ik_blocked_{false};
+  bool path_adjusting_{false};  // 보간 경로를 보정하는 중(로그를 바뀔 때만 남긴다)
 
   int consecutive_failures_{0};
   bool fault_{false};
